@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7aa47" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="夏やすみボード" />
+    <title>夏やすみボード</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <section class="auth-screen" id="authScreen" aria-live="polite">
+      <div class="auth-card">
+        <span class="auth-mark" aria-hidden="true">🐾</span>
+        <p class="eyebrow">家族で共有</p>
+        <h1>夏やすみボード</h1>
+        <p class="auth-lead" id="authLead">家族で使うメールアドレスとパスワードで入ってください。</p>
+        <form id="authForm" class="auth-form">
+          <label>メールアドレス<input id="authEmail" type="email" autocomplete="email" required placeholder="family@example.com" /></label>
+          <label>パスワード<input id="authPassword" type="password" autocomplete="current-password" required minlength="8" placeholder="8文字以上" /></label>
+          <button class="primary-button" id="signInButton" type="submit">ログインする</button>
+          <button class="secondary-button" id="signUpButton" type="button">家族用ログインを作る</button>
+        </form>
+        <p class="auth-message" id="authMessage">接続を確認しています…</p>
+      </div>
+    </section>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">🐾</span>
+          <div>
+            <p class="eyebrow">わが家の</p>
+            <h1>夏やすみボード</h1>
+          </div>
+        </div>
+        <div class="header-actions">
+          <div class="save-status" id="saveStatus"><span></span> この端末に保存中</div>
+          <button class="account-button" id="signOutButton" type="button" hidden>ログアウト</button>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <section class="view active" id="todayView" data-view="today">
+          <div class="date-heading">
+            <button class="date-move" id="previousDayButton" type="button" aria-label="前の日">‹</button>
+            <div>
+              <p id="todayLabel">きょう</p>
+              <h2 id="selectedDateTitle"></h2>
+            </div>
+            <button class="date-move" id="nextDayButton" type="button" aria-label="次の日">›</button>
+          </div>
+
+          <div class="person-switch" id="personSwitch" aria-label="見る人を選ぶ"></div>
+
+          <section class="summary-card">
+            <div class="progress-ring" id="progressRing"><strong id="progressPercent">0%</strong></div>
+            <div>
+              <p class="summary-label">きょうのできた！</p>
+              <h3 id="progressText">0こ / 0こ</h3>
+              <p id="encouragement">ひとつずつ、いってみよう</p>
+            </div>
+          </section>
+
+          <section class="panel schedule-summary">
+            <div class="section-heading">
+              <div>
+                <span class="section-icon calendar-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+                </span>
+                <h3>きょうの予定・メモ</h3>
+              </div>
+              <button class="text-button" type="button" data-open-event>＋ 追加</button>
+            </div>
+            <div id="todayEvents" class="event-list"></div>
+          </section>
+
+          <section class="task-section" id="studySection">
+            <div class="section-heading task-heading">
+              <div>
+                <span class="section-icon study-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 5.5c2.8-.8 5.5-.2 8 1.5v13c-2.5-1.7-5.2-2.3-8-1.5zM20 5.5c-2.8-.8-5.5-.2-8 1.5v13c2.5-1.7 5.2-2.3 8-1.5z"/></svg>
+                </span>
+                <h3>宿題・勉強</h3>
+              </div>
+              <span class="section-count" id="studyCount"></span>
+            </div>
+            <div class="task-list" id="studyTaskList"></div>
+          </section>
+
+          <section class="task-section" id="helpSection">
+            <div class="section-heading task-heading">
+              <div>
+                <span class="section-icon help-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9 20v-6h6v6"/></svg>
+                </span>
+                <h3>お手伝い</h3>
+              </div>
+              <span class="section-count" id="helpCount"></span>
+            </div>
+            <div class="task-list" id="helpTaskList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="calendarView" data-view="calendar">
+          <div class="page-heading calendar-page-heading">
+            <div>
+              <p class="eyebrow">家族みんなの</p>
+              <h2>カレンダー</h2>
+            </div>
+            <div class="calendar-actions">
+              <input id="icsImportInput" type="file" accept=".ics,text/calendar" hidden />
+              <button class="secondary-button compact-button" id="icsImportButton" type="button">ICSを読み込む</button>
+              <button class="secondary-button compact-button" id="icsExportButton" type="button">ICSを書き出す</button>
+              <button class="primary-button" type="button" data-open-event>＋ 予定を追加</button>
+            </div>
+          </div>
+          <section class="panel calendar-panel">
+            <div class="calendar-toolbar">
+              <button class="date-move" id="previousMonthButton" type="button" aria-label="前の月">‹</button>
+              <h3 id="calendarMonthTitle"></h3>
+              <button class="date-move" id="nextMonthButton" type="button" aria-label="次の月">›</button>
+              <button class="calendar-today-button" id="calendarTodayButton" type="button">今日へ</button>
+            </div>
+            <div class="weekday-row" aria-hidden="true">
+              <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
+            </div>
+            <div class="calendar-grid" id="calendarGrid"></div>
+          </section>
+          <section class="panel selected-date-panel">
+            <div class="section-heading">
+              <h3 id="calendarSelectedDate"></h3>
+              <button class="text-button" type="button" data-open-event>＋ 追加</button>
+            </div>
+            <div id="calendarEvents" class="event-list"></div>
+          </section>
+          <section class="panel calendar-help-panel">
+            <div class="section-heading">
+              <div>
+                <span class="section-icon help-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10M9 20v-6h6v6"/></svg>
+                </span>
+                <h3>この日のお手伝い</h3>
+              </div>
+            </div>
+            <div class="calendar-help-lists" id="calendarHelpLists"></div>
+          </section>
+        </section>
+
+        <section class="view" id="manageView" data-view="manage">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">おうちの人用</p>
+              <h2>やること管理</h2>
+            </div>
+            <button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button>
+          </div>
+          <div class="notice-card">ここで登録した「やること」が、設定した日に毎日の画面へ表示されます。</div>
+          <section class="backup-card">
+            <div>
+              <h3>データのバックアップ</h3>
+              <p>オンライン化前の予定・やること・チェック記録をファイルに保存できます。</p>
+            </div>
+            <div class="backup-actions">
+              <input id="backupImportInput" type="file" accept=".json,application/json" hidden />
+              <button class="secondary-button compact-button" id="backupImportButton" type="button">バックアップを読み込む</button>
+              <button class="primary-button compact-button" id="backupExportButton" type="button">バックアップを保存</button>
+            </div>
+          </section>
+          <div class="manage-filters" id="manageFilters"></div>
+          <div class="manage-list" id="manageTaskList"></div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="メインメニュー">
+        <button class="active" type="button" data-nav="today"><span>✓</span>きょう</button>
+        <button type="button" data-nav="calendar"><span>□</span>カレンダー</button>
+        <button type="button" data-nav="manage"><span>⚙</span>やること</button>
+      </nav>
+    </div>
+
+    <dialog id="eventDialog">
+      <form method="dialog" id="eventForm" class="dialog-card">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">家族で共有</p><h2 id="eventDialogTitle">予定・メモを追加</h2></div>
+          <button class="close-button" value="cancel" type="submit" formnovalidate aria-label="閉じる">×</button>
+        </div>
+        <input id="eventId" type="hidden" />
+        <input id="eventMode" type="hidden" value="new" />
+        <label>日付<input id="eventDate" name="date" type="date" required /></label>
+        <label>予定・メモ<input id="eventTitle" name="title" type="text" placeholder="例：塾、旅行、病院" maxlength="50" required /></label>
+        <div class="two-column">
+          <label>開始（なくてもOK）<input id="eventStartTime" name="startTime" type="time" /></label>
+          <label>終了（なくてもOK）<input id="eventEndTime" name="endTime" type="time" /></label>
+        </div>
+        <fieldset class="owner-fieldset">
+          <legend>だれの予定？ <small>複数選べます</small></legend>
+          <div class="owner-checks" id="eventOwnerChecks"></div>
+        </fieldset>
+        <div class="dialog-actions"><button class="secondary-button" value="cancel" type="submit" formnovalidate>やめる</button><button class="primary-button" id="saveEventButton" value="default" type="submit">保存する</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="taskDialog">
+      <form method="dialog" id="taskForm" class="dialog-card">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">あとから変更できます</p><h2 id="taskDialogTitle">やることを追加</h2></div>
+          <button class="close-button" value="cancel" type="submit" formnovalidate aria-label="閉じる">×</button>
+        </div>
+        <input id="taskId" type="hidden" />
+        <label>やること<input id="taskTitle" type="text" placeholder="例：算数ドリル 2ページ" maxlength="50" required /></label>
+        <div class="two-column">
+          <label>種類<select id="taskCategory"><option value="study">宿題・勉強</option><option value="help">お手伝い</option></select></label>
+          <label>だれがやる？<select id="taskAssignee"></select></label>
+        </div>
+        <label>いつやる？
+          <select id="taskScheduleType">
+            <option value="once">一度だけ</option>
+            <option value="anytime">いつやってもOK（終わるまで）</option>
+            <option value="daily">毎日</option>
+            <option value="weekly">毎週（曜日を選ぶ）</option>
+            <option value="biweekly">隔週（2週間ごと）</option>
+          </select>
+        </label>
+        <div class="schedule-fields" id="onceScheduleFields" hidden>
+          <label>実行日<input id="taskOnceDate" type="date" /></label>
+        </div>
+        <div class="schedule-fields" id="anytimeScheduleFields" hidden>
+          <label>表示を始める日<input id="taskAnytimeStartDate" type="date" /></label>
+          <p class="schedule-hint">できた！にした翌日から表示しません。</p>
+        </div>
+        <p class="schedule-hint" id="dailyScheduleHint" hidden>毎日の画面に表示します。</p>
+        <div class="schedule-fields" id="weeklyScheduleFields" hidden>
+          <fieldset>
+            <legend>表示する曜日</legend>
+            <div class="weekday-checks" id="weekdayChecks"></div>
+          </fieldset>
+        </div>
+        <div class="schedule-fields" id="biweeklyScheduleFields" hidden>
+          <label>最初にやる日<input id="taskBiweeklyStartDate" type="date" /></label>
+          <p class="schedule-hint">この日から14日ごとに表示します。</p>
+        </div>
+        <label class="switch-label"><input id="taskActive" type="checkbox" checked /><span></span>このやることを有効にする</label>
+        <div class="dialog-actions"><button class="secondary-button" value="cancel" type="submit" formnovalidate>やめる</button><button class="primary-button" id="saveTaskButton" value="default" type="submit">保存する</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

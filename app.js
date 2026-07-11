@@ -1,0 +1,976 @@
+const STORAGE_KEY = "summer-board-prototype-v1";
+const DAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
+const PARENT = { id: "parent", name: "おかあ", color: "#e9969f" };
+const cloud = {
+  client: null,
+  user: null,
+  familyId: null,
+  ready: false,
+  syncTimer: null,
+  syncing: false
+};
+
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(key) {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function createInitialState() {
+  const today = new Date();
+  const todayKey = toDateKey(today);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return {
+    people: [
+      { id: "child1", name: "りょういち", color: "#72a9dc" },
+      { id: "child2", name: "しゅんや", color: "#69b98b" }
+    ],
+    selectedPerson: "child1",
+    selectedDate: todayKey,
+    calendarDate: todayKey,
+    manageFilter: "all",
+    tasks: [
+      { id: crypto.randomUUID(), title: "算数ドリル 2ページ", category: "study", assignee: "child1", scheduleType: "weekly", weekdays: [1, 2, 3, 4, 5], active: true },
+      { id: crypto.randomUUID(), title: "音読", category: "study", assignee: "both", scheduleType: "daily", weekdays: [], active: true },
+      { id: crypto.randomUUID(), title: "読書 20分", category: "study", assignee: "child2", scheduleType: "weekly", weekdays: [1, 3, 5], active: true },
+      { id: crypto.randomUUID(), title: "食器を片づける", category: "help", assignee: "both", scheduleType: "daily", weekdays: [], active: true },
+      { id: crypto.randomUUID(), title: "お風呂そうじ", category: "help", assignee: "child1", scheduleType: "weekly", weekdays: [2, 4, 6], active: true },
+      { id: crypto.randomUUID(), title: "洗濯ものをたたむ", category: "help", assignee: "child2", scheduleType: "weekly", weekdays: [1, 3, 5], active: true }
+    ],
+    completions: {},
+    events: [
+      { id: crypto.randomUUID(), date: todayKey, title: "夏休みの予定を家族で確認", startTime: "19:00", endTime: "19:30", owner: "family" },
+      { id: crypto.randomUUID(), date: toDateKey(tomorrow), title: "塾", startTime: "10:00", endTime: "11:00", owner: "child1" }
+    ]
+  };
+}
+
+let state = loadState();
+let currentView = "today";
+let toastTimer;
+
+function loadState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (saved?.tasks && saved?.people) {
+      saved.people = saved.people.map(person => person.id === "child2" ? { ...person, color: "#69b98b" } : person);
+      saved.tasks = saved.tasks.map(task => ({
+        ...task,
+        scheduleType: task.scheduleType || (task.weekdays?.length === 7 ? "daily" : "weekly"),
+        weekdays: task.weekdays || []
+      }));
+      return saved;
+    }
+    return createInitialState();
+  } catch {
+    return createInitialState();
+  }
+}
+
+function saveState(message) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const status = document.getElementById("saveStatus");
+  if (cloud.ready) {
+    status.innerHTML = "<span></span> 同期準備中";
+    queueCloudSync();
+  } else {
+    status.innerHTML = "<span></span> この端末に保存中";
+  }
+  if (message) showToast(message);
+}
+
+function setSaveStatus(message, isError = false) {
+  const status = document.getElementById("saveStatus");
+  status.innerHTML = `<span${isError ? ' class="status-error"' : ""}></span> ${message}`;
+}
+
+function scheduleForCloud(task) {
+  return {
+    weekdays: task.weekdays || [],
+    onceDate: task.onceDate || "",
+    anytimeStartDate: task.anytimeStartDate || "",
+    biweeklyStartDate: task.biweeklyStartDate || ""
+  };
+}
+
+function taskFromCloud(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    assignee: row.assignee_key,
+    scheduleType: row.schedule_type,
+    weekdays: row.schedule?.weekdays || [],
+    onceDate: row.schedule?.onceDate || "",
+    anytimeStartDate: row.schedule?.anytimeStartDate || "",
+    biweeklyStartDate: row.schedule?.biweeklyStartDate || "",
+    active: row.active
+  };
+}
+
+function eventFromCloud(row) {
+  return {
+    id: row.id,
+    date: row.event_date,
+    title: row.title,
+    startTime: row.start_time ? row.start_time.slice(0, 5) : "",
+    endTime: row.end_time ? row.end_time.slice(0, 5) : "",
+    owners: row.owner_keys || ["family"],
+    externalUid: row.external_uid || ""
+  };
+}
+
+function cloudCompletionRows() {
+  return Object.entries(state.completions)
+    .filter(([, complete]) => complete)
+    .map(([key]) => {
+      const [completedOn, memberKey, taskId] = key.split(":");
+      return { family_id: cloud.familyId, task_id: taskId, member_key: memberKey, completed_on: completedOn };
+    });
+}
+
+async function loadCloudState() {
+  const [profileResult, taskResult, eventResult, completionResult] = await Promise.all([
+    cloud.client.from("family_members").select("profile_key, display_name, color, role, sort_order").eq("family_id", cloud.familyId).order("sort_order"),
+    cloud.client.from("tasks").select("*").eq("family_id", cloud.familyId),
+    cloud.client.from("calendar_events").select("*").eq("family_id", cloud.familyId),
+    cloud.client.from("task_completions").select("task_id, member_key, completed_on").eq("family_id", cloud.familyId)
+  ]);
+  const error = [profileResult, taskResult, eventResult, completionResult].find(result => result.error)?.error;
+  if (error) throw error;
+
+  const children = profileResult.data.filter(member => member.role === "child").map(member => ({ id: member.profile_key, name: member.display_name, color: member.color }));
+  if (children.length) state.people = children;
+  state.tasks = taskResult.data.map(taskFromCloud);
+  state.events = eventResult.data.map(eventFromCloud);
+  state.completions = Object.fromEntries(completionResult.data.map(row => [completionKey(row.completed_on, row.member_key, row.task_id), true]));
+  if (!state.people.some(person => person.id === state.selectedPerson)) state.selectedPerson = state.people[0]?.id || "child1";
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+async function removeMissingCloudRows(table, ids) {
+  const { data, error } = await cloud.client.from(table).select("id").eq("family_id", cloud.familyId);
+  if (error) throw error;
+  const missing = data.filter(row => !ids.has(row.id));
+  await Promise.all(missing.map(row => cloud.client.from(table).delete().eq("id", row.id)));
+}
+
+async function syncCloudState() {
+  if (!cloud.ready || cloud.syncing) return;
+  cloud.syncing = true;
+  setSaveStatus("同期中…");
+  try {
+    const taskRows = state.tasks.map(task => ({
+      id: task.id, family_id: cloud.familyId, title: task.title, category: task.category,
+      assignee_key: task.assignee, schedule_type: task.scheduleType, schedule: scheduleForCloud(task), active: task.active
+    }));
+    const eventRows = state.events.map(item => ({
+      id: item.id, family_id: cloud.familyId, event_date: item.date, title: item.title,
+      start_time: item.startTime || null, end_time: item.endTime || null,
+      owner_keys: eventOwnerIds(item), external_uid: item.externalUid || null
+    }));
+    const completionRows = cloudCompletionRows();
+    if (taskRows.length) {
+      const { error } = await cloud.client.from("tasks").upsert(taskRows);
+      if (error) throw error;
+    }
+    if (eventRows.length) {
+      const { error } = await cloud.client.from("calendar_events").upsert(eventRows);
+      if (error) throw error;
+    }
+    if (completionRows.length) {
+      const { error } = await cloud.client.from("task_completions").upsert(completionRows);
+      if (error) throw error;
+    }
+    await removeMissingCloudRows("tasks", new Set(state.tasks.map(task => task.id)));
+    await removeMissingCloudRows("calendar_events", new Set(state.events.map(item => item.id)));
+
+    const { data: currentCompletions, error: completionError } = await cloud.client
+      .from("task_completions").select("task_id, member_key, completed_on").eq("family_id", cloud.familyId);
+    if (completionError) throw completionError;
+    const wanted = new Set(completionRows.map(row => `${row.completed_on}:${row.member_key}:${row.task_id}`));
+    await Promise.all(currentCompletions
+      .filter(row => !wanted.has(`${row.completed_on}:${row.member_key}:${row.task_id}`))
+      .map(row => cloud.client.from("task_completions").delete().eq("task_id", row.task_id).eq("member_key", row.member_key).eq("completed_on", row.completed_on)));
+    setSaveStatus("家族と同期済み");
+  } catch (error) {
+    console.error(error);
+    setSaveStatus("同期できませんでした", true);
+    showToast("同期できませんでした。通信を確認してください");
+  } finally {
+    cloud.syncing = false;
+  }
+}
+
+function queueCloudSync() {
+  clearTimeout(cloud.syncTimer);
+  cloud.syncTimer = window.setTimeout(syncCloudState, 450);
+}
+
+function showAuthMessage(message) {
+  document.getElementById("authMessage").textContent = message;
+}
+
+async function startFamilySession(user) {
+  cloud.user = user;
+  showAuthMessage("家族のデータを準備しています…");
+  const { data: membership, error: membershipError } = await cloud.client
+    .from("family_users").select("family_id").eq("user_id", user.id).maybeSingle();
+  if (membershipError) throw membershipError;
+  let createdFamily = false;
+  if (membership?.family_id) {
+    cloud.familyId = membership.family_id;
+  } else {
+    const { data, error } = await cloud.client.rpc("bootstrap_family", { p_family_name: "わが家" });
+    if (error) throw error;
+    cloud.familyId = data;
+    createdFamily = true;
+  }
+  if (createdFamily) {
+    cloud.ready = true;
+    await syncCloudState();
+  } else {
+    await loadCloudState();
+    cloud.ready = true;
+  }
+  document.getElementById("authScreen").hidden = true;
+  document.getElementById("signOutButton").hidden = false;
+  setSaveStatus("家族と同期済み");
+  renderAll();
+}
+
+async function initializeOnlineApp() {
+  const config = window.SUMMER_BOARD_SUPABASE;
+  if (!config?.url || !config?.publishableKey || !window.supabase) {
+    showAuthMessage("接続の設定が見つかりませんでした。");
+    return;
+  }
+  cloud.client = window.supabase.createClient(config.url, config.publishableKey);
+  const { data: { session } } = await cloud.client.auth.getSession();
+  if (session?.user) {
+    try {
+      await startFamilySession(session.user);
+    } catch (error) {
+      console.error(error);
+      showAuthMessage("準備中に問題がありました。もう一度ログインしてください。");
+    }
+  } else {
+    showAuthMessage("初めてなら「家族用ログインを作る」を押してください。");
+  }
+  cloud.client.auth.onAuthStateChange(async (_event, session) => {
+    if (session?.user && !cloud.ready) {
+      try { await startFamilySession(session.user); } catch (error) { console.error(error); showAuthMessage("準備中に問題がありました。"); }
+    }
+  });
+}
+
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 1800);
+}
+
+function personById(id) {
+  return state.people.find(person => person.id === id);
+}
+
+function ownerDetails(owner) {
+  if (owner === "family") return { name: "家族", color: "#f0a64b" };
+  if (owner === PARENT.id) return PARENT;
+  return personById(owner) || { name: "家族", color: "#f0a64b" };
+}
+
+function eventOwnerIds(event) {
+  return event.owners?.length ? event.owners : [event.owner || "family"];
+}
+
+function eventStartTime(event) {
+  return event.startTime || event.time || "";
+}
+
+function formatEventTime(event) {
+  const start = eventStartTime(event);
+  const end = event.endTime || "";
+  if (start && end) return `${start}〜${end}`;
+  if (start) return start;
+  if (end) return `〜${end}`;
+  return "";
+}
+
+function escapeIcsText(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+}
+
+function unescapeIcsText(value) {
+  return String(value).replace(/\\n/gi, "\n").replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\");
+}
+
+function foldIcsLine(line) {
+  const encoder = new TextEncoder();
+  const folded = [];
+  let current = "";
+  for (const character of line) {
+    const prefix = folded.length ? " " : "";
+    if (current && encoder.encode(prefix + current + character).length > 74) {
+      folded.push(`${folded.length ? " " : ""}${current}`);
+      current = character;
+    } else {
+      current += character;
+    }
+  }
+  folded.push(`${folded.length ? " " : ""}${current}`);
+  return folded.join("\r\n");
+}
+
+function compactIcsDate(dateKey) {
+  return dateKey.replace(/-/g, "");
+}
+
+function compactIcsTime(time) {
+  return time.replace(":", "") + "00";
+}
+
+function nextDateKey(dateKey) {
+  const date = parseDateKey(dateKey);
+  date.setDate(date.getDate() + 1);
+  return toDateKey(date);
+}
+
+function buildIcsCalendar(events) {
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Summer Board//JA",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH"
+  ];
+  events.forEach(event => {
+    const start = eventStartTime(event);
+    const end = event.endTime || "";
+    const ownerNames = eventOwnerIds(event).map(owner => ownerDetails(owner).name).join("、");
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${escapeIcsText(event.externalUid || `summer-board-${event.id}@local`)}`);
+    lines.push(`DTSTAMP:${timestamp}`);
+    lines.push(`SUMMARY:${escapeIcsText(event.title)}`);
+    if (start) {
+      lines.push(`DTSTART:${compactIcsDate(event.date)}T${compactIcsTime(start)}`);
+      if (end) {
+        const endDate = end <= start ? nextDateKey(event.date) : event.date;
+        lines.push(`DTEND:${compactIcsDate(endDate)}T${compactIcsTime(end)}`);
+      }
+    } else {
+      lines.push(`DTSTART;VALUE=DATE:${compactIcsDate(event.date)}`);
+      lines.push(`DTEND;VALUE=DATE:${compactIcsDate(nextDateKey(event.date))}`);
+      if (end) lines.push(`X-SUMMER-END-TIME:${end}`);
+    }
+    lines.push(`DESCRIPTION:${escapeIcsText(`夏やすみボード担当: ${ownerNames}`)}`);
+    lines.push(`X-SUMMER-OWNERS:${eventOwnerIds(event).join(",")}`);
+    lines.push("END:VEVENT");
+  });
+  lines.push("END:VCALENDAR");
+  return lines.map(foldIcsLine).join("\r\n") + "\r\n";
+}
+
+function getIcsProperty(lines, propertyName) {
+  const line = lines.find(item => item.split(":", 1)[0].split(";", 1)[0].toUpperCase() === propertyName);
+  if (!line) return null;
+  const separator = line.indexOf(":");
+  return { key: line.slice(0, separator), value: line.slice(separator + 1) };
+}
+
+function parseIcsTemporal(property) {
+  if (!property) return null;
+  const value = property.value.trim();
+  const dateOnly = property.key.toUpperCase().includes("VALUE=DATE") || /^\d{8}$/.test(value);
+  if (dateOnly) return { date: `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`, time: "", dateOnly: true };
+  const match = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
+  if (!match) return null;
+  if (value.endsWith("Z")) {
+    const local = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5])));
+    return { date: toDateKey(local), time: `${String(local.getHours()).padStart(2, "0")}:${String(local.getMinutes()).padStart(2, "0")}`, dateOnly: false };
+  }
+  return { date: `${match[1]}-${match[2]}-${match[3]}`, time: `${match[4]}:${match[5]}`, dateOnly: false };
+}
+
+function parseIcsCalendar(text) {
+  const unfolded = text.replace(/\r?\n[ \t]/g, "");
+  const blocks = unfolded.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/gi) || [];
+  return blocks.map(block => {
+    const lines = block.split(/\r?\n/);
+    const summary = getIcsProperty(lines, "SUMMARY");
+    const start = parseIcsTemporal(getIcsProperty(lines, "DTSTART"));
+    if (!summary || !start) return null;
+    const endProperty = getIcsProperty(lines, "DTEND");
+    const end = parseIcsTemporal(endProperty);
+    const uid = getIcsProperty(lines, "UID")?.value.trim() || "";
+    const customOwners = getIcsProperty(lines, "X-SUMMER-OWNERS")?.value.split(",").filter(Boolean) || [];
+    const knownOwnerIds = new Set(["family", PARENT.id, ...state.people.map(person => person.id)]);
+    const owners = customOwners.filter(owner => knownOwnerIds.has(owner));
+    const customEndTime = getIcsProperty(lines, "X-SUMMER-END-TIME")?.value || "";
+    return {
+      id: crypto.randomUUID(),
+      externalUid: uid,
+      date: start.date,
+      title: unescapeIcsText(summary.value),
+      startTime: start.dateOnly ? "" : start.time,
+      endTime: start.dateOnly ? customEndTime : (end?.time || ""),
+      owners: owners.length ? owners : ["family"]
+    };
+  }).filter(Boolean);
+}
+
+function eventFingerprint(event) {
+  return [event.date, eventStartTime(event), event.endTime || "", event.title.trim()].join("|");
+}
+
+function importIcsEvents(importedEvents) {
+  const knownUids = new Set(state.events.flatMap(event => [event.externalUid, `summer-board-${event.id}@local`]).filter(Boolean));
+  const knownFingerprints = new Set(state.events.map(eventFingerprint));
+  let importedCount = 0;
+  let skippedCount = 0;
+  importedEvents.forEach(event => {
+    if ((event.externalUid && knownUids.has(event.externalUid)) || knownFingerprints.has(eventFingerprint(event))) {
+      skippedCount += 1;
+      return;
+    }
+    state.events.push(event);
+    if (event.externalUid) knownUids.add(event.externalUid);
+    knownFingerprints.add(eventFingerprint(event));
+    importedCount += 1;
+  });
+  return { importedCount, skippedCount };
+}
+
+function formatLongDate(key) {
+  const date = parseDateKey(key);
+  return `${date.getMonth() + 1}月${date.getDate()}日（${DAY_LABELS[date.getDay()]}）`;
+}
+
+function appliesToPerson(task, personId) {
+  return task.assignee === "both" || task.assignee === personId;
+}
+
+function dateDayNumber(dateKey) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day) / 86400000);
+}
+
+function anytimeCompletionDate(taskId, personId) {
+  const suffix = `:${personId}:${taskId}`;
+  return Object.keys(state.completions).filter(key => state.completions[key] && key.endsWith(suffix)).map(key => key.slice(0, 10)).sort()[0] || "";
+}
+
+function taskMatchesDate(task, dateKey, personId) {
+  if (task.scheduleType === "once") return task.onceDate === dateKey;
+  if (task.scheduleType === "anytime") {
+    if (!task.anytimeStartDate || dateKey < task.anytimeStartDate) return false;
+    const completedDate = anytimeCompletionDate(task.id, personId);
+    return !completedDate || dateKey <= completedDate;
+  }
+  if (task.scheduleType === "daily") return true;
+  if (task.scheduleType === "biweekly") {
+    if (!task.biweeklyStartDate) return false;
+    const difference = dateDayNumber(dateKey) - dateDayNumber(task.biweeklyStartDate);
+    return difference >= 0 && difference % 14 === 0;
+  }
+  return (task.weekdays || []).includes(parseDateKey(dateKey).getDay());
+}
+
+function tasksFor(dateKey, personId) {
+  return state.tasks.filter(task => task.active && taskMatchesDate(task, dateKey, personId) && appliesToPerson(task, personId));
+}
+
+function taskScheduleDescription(task) {
+  if (task.scheduleType === "once") return `一度だけ：${task.onceDate ? formatLongDate(task.onceDate) : "日付未設定"}`;
+  if (task.scheduleType === "anytime") return `いつやってもOK：${task.anytimeStartDate ? formatLongDate(task.anytimeStartDate) : "開始日未設定"}から完了まで`;
+  if (task.scheduleType === "daily") return "毎日";
+  if (task.scheduleType === "biweekly") return `隔週：${task.biweeklyStartDate ? formatLongDate(task.biweeklyStartDate) : "開始日未設定"}から`;
+  const weekdays = task.weekdays || [];
+  return weekdays.length === 7 ? "毎日" : weekdays.map(day => `${DAY_LABELS[day]}曜`).join("・");
+}
+
+function completionKey(dateKey, personId, taskId) {
+  return `${dateKey}:${personId}:${taskId}`;
+}
+
+function isTaskDone(taskId, dateKey, personId) {
+  return Boolean(state.completions[completionKey(dateKey, personId, taskId)]);
+}
+
+function isDone(taskId) {
+  return isTaskDone(taskId, state.selectedDate, state.selectedPerson);
+}
+
+function renderAll() {
+  renderPersonSwitch();
+  renderToday();
+  renderCalendar();
+  renderManage();
+  fillOwnerControls();
+}
+
+function renderPersonSwitch() {
+  document.getElementById("personSwitch").innerHTML = state.people.map(person => `
+    <button class="person-chip ${state.selectedPerson === person.id ? "active" : ""}" style="--person-color:${person.color}" data-person="${person.id}" type="button">${person.name}</button>
+  `).join("");
+}
+
+function renderToday() {
+  const selected = parseDateKey(state.selectedDate);
+  const todayKey = toDateKey(new Date());
+  document.getElementById("todayLabel").textContent = state.selectedDate === todayKey ? "きょう" : state.selectedDate < todayKey ? "この日の記録" : "これからの予定";
+  document.getElementById("selectedDateTitle").textContent = formatLongDate(state.selectedDate);
+
+  const tasks = tasksFor(state.selectedDate, state.selectedPerson);
+  const completed = tasks.filter(task => isDone(task.id)).length;
+  const percent = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+  document.getElementById("progressPercent").textContent = `${percent}%`;
+  document.getElementById("progressRing").style.setProperty("--progress", `${percent * 3.6}deg`);
+  document.getElementById("progressText").textContent = `${completed}こ / ${tasks.length}こ`;
+  document.getElementById("encouragement").textContent = tasks.length === 0 ? "今日はのんびりデー" : percent === 100 ? "ぜんぶできた！おつかれさま 🎉" : completed ? "いい調子！あと少し" : "ひとつずつ、いってみよう";
+
+  renderTodayEvents();
+  renderTaskCategory("study", tasks);
+  renderTaskCategory("help", tasks);
+}
+
+function renderTodayEvents() {
+  const events = state.events.filter(event => event.date === state.selectedDate).sort((a, b) => (eventStartTime(a) || "99:99").localeCompare(eventStartTime(b) || "99:99"));
+  document.getElementById("todayEvents").innerHTML = eventListHtml(events);
+}
+
+function eventListHtml(events) {
+  if (!events.length) return '<p class="empty-state">予定はまだありません</p>';
+  return events.map(event => {
+    const owners = eventOwnerIds(event).map(ownerDetails);
+    const displayTime = formatEventTime(event);
+    return `<article class="event-item">
+      <span class="event-owner-list">${owners.map(owner => `<span class="event-owner" style="--owner-color:${owner.color}">${owner.name}</span>`).join("")}</span>
+      ${displayTime ? `<time class="event-time">${displayTime}</time>` : ""}
+      <p class="event-title">${escapeHtml(event.title)}</p>
+      <span class="event-actions">
+        <button class="copy-small" type="button" data-copy-event="${event.id}" aria-label="予定をコピー">⧉</button>
+        <button class="edit-small" type="button" data-edit-event="${event.id}" aria-label="予定を編集">✎</button>
+        <button class="delete-small" type="button" data-delete-event="${event.id}" aria-label="予定を削除">×</button>
+      </span>
+    </article>`;
+  }).join("");
+}
+
+function renderTaskCategory(category, tasks) {
+  const categoryTasks = tasks.filter(task => task.category === category);
+  const list = document.getElementById(category === "study" ? "studyTaskList" : "helpTaskList");
+  const count = document.getElementById(category === "study" ? "studyCount" : "helpCount");
+  const completed = categoryTasks.filter(task => isDone(task.id)).length;
+  count.textContent = `${completed} / ${categoryTasks.length}`;
+  list.innerHTML = categoryTasks.length ? categoryTasks.map(task => {
+    const done = isDone(task.id);
+    return `<button class="task-card ${done ? "done" : ""}" type="button" data-toggle-task="${task.id}">
+      <span class="task-check">✓</span>
+      <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">タップして${done ? "もとに戻す" : "できた！にする"}</span></span>
+    </button>`;
+  }).join("") : '<p class="empty-state">この日のやることはありません</p>';
+}
+
+function renderCalendar() {
+  const anchor = parseDateKey(state.calendarDate);
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  document.getElementById("calendarMonthTitle").textContent = `${year}年 ${month + 1}月`;
+  document.getElementById("calendarSelectedDate").textContent = formatLongDate(state.selectedDate);
+  document.getElementById("calendarEvents").innerHTML = eventListHtml(state.events.filter(event => event.date === state.selectedDate));
+  renderCalendarHelp();
+
+  const first = new Date(year, month, 1);
+  const gridStart = new Date(year, month, 1 - first.getDay());
+  const todayKey = toDateKey(new Date());
+  const cells = [];
+  for (let index = 0; index < 42; index += 1) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    const key = toDateKey(date);
+    const events = state.events.filter(event => event.date === key);
+    cells.push(`<button class="calendar-day ${date.getMonth() !== month ? "other-month" : ""} ${key === state.selectedDate ? "selected" : ""} ${key === todayKey ? "today" : ""}" type="button" data-calendar-day="${key}">
+      <span class="day-number">${date.getDate()}</span>
+      <span class="calendar-dot-row">${events.flatMap(event => eventOwnerIds(event).map(owner => `<i class="calendar-dot" style="--dot-color:${ownerDetails(owner).color}"></i>`)).slice(0, 6).join("")}</span>
+      ${events[0] ? `<span class="calendar-event-preview">${escapeHtml(events[0].title)}</span>` : ""}
+    </button>`);
+  }
+  document.getElementById("calendarGrid").innerHTML = cells.join("");
+}
+
+function renderCalendarHelp() {
+  document.getElementById("calendarHelpLists").innerHTML = state.people.map(person => {
+    const helpTasks = tasksFor(state.selectedDate, person.id).filter(task => task.category === "help");
+    const completed = helpTasks.filter(task => isTaskDone(task.id, state.selectedDate, person.id)).length;
+    const taskList = helpTasks.length ? helpTasks.map(task => {
+      const done = isTaskDone(task.id, state.selectedDate, person.id);
+      return `<button class="task-card calendar-help-task ${done ? "done" : ""}" type="button" data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}">
+        <span class="task-check">✓</span>
+        <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${done ? "できた！" : "タップしてチェック"}</span></span>
+      </button>`;
+    }).join("") : '<p class="calendar-help-empty">この日のお手伝いはありません</p>';
+    return `<section class="calendar-person-help" style="--person-color:${person.color}">
+      <div class="calendar-person-heading"><span class="calendar-person-name">${person.name}</span><span class="calendar-person-count">${completed} / ${helpTasks.length}</span></div>
+      <div class="calendar-help-tasks">${taskList}</div>
+    </section>`;
+  }).join("");
+}
+
+function renderManage() {
+  const filters = [{ id: "all", name: "すべて" }, ...state.people.map(person => ({ id: person.id, name: person.name })), { id: "both", name: "ふたり共通" }];
+  document.getElementById("manageFilters").innerHTML = filters.map(filter => `<button class="filter-chip ${state.manageFilter === filter.id ? "active" : ""}" type="button" data-manage-filter="${filter.id}">${filter.name}</button>`).join("");
+  const tasks = state.tasks.filter(task => state.manageFilter === "all" || task.assignee === state.manageFilter);
+  document.getElementById("manageTaskList").innerHTML = tasks.length ? tasks.map(task => {
+    const assignee = task.assignee === "both" ? "ふたり共通" : personById(task.assignee)?.name;
+    const schedule = taskScheduleDescription(task);
+    return `<article class="manage-card ${task.active ? "" : "inactive"}">
+      <div class="manage-card-top"><div><span class="category-label ${task.category === "help" ? "help" : ""}">${task.category === "study" ? "宿題・勉強" : "お手伝い"}</span><h3>${escapeHtml(task.title)}</h3></div>
+      <div class="manage-actions"><button type="button" data-edit-task="${task.id}" aria-label="編集">✎</button><button type="button" data-delete-task="${task.id}" aria-label="削除">×</button></div></div>
+      <p>${assignee}　／　${schedule}${task.active ? "" : "　／　お休み中"}</p>
+    </article>`;
+  }).join("") : '<p class="empty-state">登録されたやることはありません</p>';
+}
+
+function fillOwnerControls() {
+  const owners = [{ id: "family", name: "家族みんな", color: "#f0a64b" }, PARENT, ...state.people];
+  document.getElementById("eventOwnerChecks").innerHTML = owners.map(owner => `<label><input type="checkbox" value="${owner.id}"><span style="--owner-choice-color:${owner.color}">${owner.name}</span></label>`).join("");
+  document.getElementById("taskAssignee").innerHTML = `${state.people.map(person => `<option value="${person.id}">${person.name}</option>`).join("")}<option value="both">ふたり共通</option>`;
+}
+
+function switchView(view) {
+  currentView = view;
+  document.querySelectorAll(".view").forEach(element => element.classList.toggle("active", element.dataset.view === view));
+  document.querySelectorAll("[data-nav]").forEach(button => button.classList.toggle("active", button.dataset.nav === view));
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function moveSelectedDate(days) {
+  const date = parseDateKey(state.selectedDate);
+  date.setDate(date.getDate() + days);
+  state.selectedDate = toDateKey(date);
+  state.calendarDate = state.selectedDate;
+  saveState();
+  renderAll();
+}
+
+function moveCalendarMonth(offset) {
+  const date = parseDateKey(state.calendarDate);
+  date.setDate(1);
+  date.setMonth(date.getMonth() + offset);
+  state.calendarDate = toDateKey(date);
+  renderCalendar();
+}
+
+function openEventDialog(eventId, mode = "edit") {
+  document.getElementById("eventForm").reset();
+  const savedEvent = eventId ? state.events.find(item => item.id === eventId) : null;
+  const isCopy = Boolean(savedEvent && mode === "copy");
+  document.getElementById("eventId").value = isCopy ? "" : (savedEvent?.id || "");
+  document.getElementById("eventMode").value = isCopy ? "copy" : (savedEvent ? "edit" : "new");
+  document.getElementById("eventDialogTitle").textContent = isCopy ? "予定・メモをコピー" : (savedEvent ? "予定・メモを編集" : "予定・メモを追加");
+  document.getElementById("saveEventButton").textContent = isCopy ? "コピーを保存" : (savedEvent ? "変更を保存" : "保存する");
+  document.getElementById("eventDate").value = savedEvent?.date || state.selectedDate;
+  document.getElementById("eventTitle").value = savedEvent?.title || "";
+  document.getElementById("eventStartTime").value = savedEvent ? eventStartTime(savedEvent) : "";
+  document.getElementById("eventEndTime").value = savedEvent?.endTime || "";
+  const selectedOwners = savedEvent ? eventOwnerIds(savedEvent) : ["family"];
+  document.querySelectorAll('#eventOwnerChecks input[type="checkbox"]').forEach(input => {
+    input.checked = selectedOwners.includes(input.value);
+  });
+  document.getElementById("eventDialog").showModal();
+  setTimeout(() => document.getElementById(isCopy ? "eventDate" : "eventTitle").focus(), 50);
+}
+
+function updateTaskScheduleFields() {
+  const scheduleType = document.getElementById("taskScheduleType").value;
+  document.getElementById("onceScheduleFields").hidden = scheduleType !== "once";
+  document.getElementById("anytimeScheduleFields").hidden = scheduleType !== "anytime";
+  document.getElementById("dailyScheduleHint").hidden = scheduleType !== "daily";
+  document.getElementById("weeklyScheduleFields").hidden = scheduleType !== "weekly";
+  document.getElementById("biweeklyScheduleFields").hidden = scheduleType !== "biweekly";
+}
+
+function openTaskDialog(taskId) {
+  document.getElementById("taskForm").reset();
+  const task = taskId ? state.tasks.find(item => item.id === taskId) : null;
+  document.getElementById("taskDialogTitle").textContent = task ? "やることを編集" : "やることを追加";
+  document.getElementById("taskId").value = task?.id || "";
+  document.getElementById("taskTitle").value = task?.title || "";
+  document.getElementById("taskCategory").value = task?.category || "study";
+  document.getElementById("taskAssignee").value = task?.assignee || state.selectedPerson;
+  document.getElementById("taskActive").checked = task ? task.active : true;
+  document.getElementById("taskScheduleType").value = task?.scheduleType || "once";
+  document.getElementById("taskOnceDate").value = task?.onceDate || state.selectedDate;
+  document.getElementById("taskAnytimeStartDate").value = task?.anytimeStartDate || state.selectedDate;
+  document.getElementById("taskBiweeklyStartDate").value = task?.biweeklyStartDate || state.selectedDate;
+  document.getElementById("weekdayChecks").innerHTML = DAY_LABELS.map((label, index) => `<label><input type="checkbox" value="${index}" ${(task?.weekdays || [1,2,3,4,5]).includes(index) ? "checked" : ""}><span>${label}</span></label>`).join("");
+  updateTaskScheduleFields();
+  document.getElementById("taskDialog").showModal();
+  setTimeout(() => document.getElementById("taskTitle").focus(), 50);
+}
+
+function escapeHtml(value) {
+  return value.replace(/[&<>'"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" })[character]);
+}
+
+document.addEventListener("click", event => {
+  const target = event.target.closest("button");
+  if (!target) return;
+  if (target.dataset.nav) switchView(target.dataset.nav);
+  if (target.dataset.person) { state.selectedPerson = target.dataset.person; saveState(); renderAll(); }
+  if (target.dataset.toggleTask) {
+    const key = completionKey(state.selectedDate, state.selectedPerson, target.dataset.toggleTask);
+    state.completions[key] = !state.completions[key];
+    if (!state.completions[key]) delete state.completions[key];
+    saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
+    renderToday();
+  }
+  if (target.dataset.toggleCalendarTask) {
+    const key = completionKey(state.selectedDate, target.dataset.calendarPerson, target.dataset.toggleCalendarTask);
+    state.completions[key] = !state.completions[key];
+    if (!state.completions[key]) delete state.completions[key];
+    saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
+    renderAll();
+  }
+  if (target.hasAttribute("data-open-event")) openEventDialog();
+  if (target.dataset.copyEvent) openEventDialog(target.dataset.copyEvent, "copy");
+  if (target.dataset.editEvent) openEventDialog(target.dataset.editEvent);
+  if (target.dataset.deleteEvent) {
+    state.events = state.events.filter(item => item.id !== target.dataset.deleteEvent);
+    saveState("予定を削除しました"); renderAll();
+  }
+  if (target.dataset.calendarDay) { state.selectedDate = target.dataset.calendarDay; state.calendarDate = target.dataset.calendarDay; saveState(); renderAll(); }
+  if (target.dataset.manageFilter) { state.manageFilter = target.dataset.manageFilter; saveState(); renderManage(); }
+  if (target.dataset.editTask) openTaskDialog(target.dataset.editTask);
+  if (target.dataset.deleteTask) {
+    if (window.confirm("この「やること」を削除しますか？")) {
+      const deletedTaskId = target.dataset.deleteTask;
+      state.tasks = state.tasks.filter(item => item.id !== deletedTaskId);
+      Object.keys(state.completions).filter(key => key.endsWith(`:${deletedTaskId}`)).forEach(key => { delete state.completions[key]; });
+      saveState("削除しました");
+      renderAll();
+    }
+  }
+});
+
+document.getElementById("previousDayButton").addEventListener("click", () => moveSelectedDate(-1));
+document.getElementById("nextDayButton").addEventListener("click", () => moveSelectedDate(1));
+document.getElementById("previousMonthButton").addEventListener("click", () => moveCalendarMonth(-1));
+document.getElementById("nextMonthButton").addEventListener("click", () => moveCalendarMonth(1));
+document.getElementById("calendarTodayButton").addEventListener("click", () => {
+  const todayKey = toDateKey(new Date());
+  state.selectedDate = todayKey;
+  state.calendarDate = todayKey;
+  saveState("今日に戻りました");
+  renderAll();
+});
+document.getElementById("icsExportButton").addEventListener("click", () => {
+  if (!state.events.length) { showToast("書き出す予定がありません"); return; }
+  const blob = new Blob([buildIcsCalendar(state.events)], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `夏やすみボード-${toDateKey(new Date())}.ics`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast(`${state.events.length}件の予定を書き出しました`);
+});
+document.getElementById("icsImportButton").addEventListener("click", () => {
+  document.getElementById("icsImportInput").click();
+});
+document.getElementById("icsImportInput").addEventListener("change", async event => {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const importedEvents = parseIcsCalendar(await file.text());
+    if (!importedEvents.length) { showToast("読み込める予定が見つかりませんでした"); return; }
+    const result = importIcsEvents(importedEvents);
+    if (result.importedCount) {
+      state.selectedDate = importedEvents[0].date;
+      state.calendarDate = importedEvents[0].date;
+      saveState(`${result.importedCount}件の予定を読み込みました`);
+      renderAll();
+    } else {
+      showToast("すべて登録済みの予定です");
+    }
+  } catch {
+    showToast("ICSファイルを読み込めませんでした");
+  } finally {
+    input.value = "";
+  }
+});
+document.getElementById("openTaskButton").addEventListener("click", () => openTaskDialog());
+document.getElementById("taskScheduleType").addEventListener("change", updateTaskScheduleFields);
+
+document.getElementById("eventOwnerChecks").addEventListener("change", event => {
+  if (!event.target.matches('input[type="checkbox"]') || !event.target.checked) return;
+  const checkboxes = [...document.querySelectorAll('#eventOwnerChecks input[type="checkbox"]')];
+  if (event.target.value === "family") {
+    checkboxes.filter(input => input !== event.target).forEach(input => { input.checked = false; });
+  } else {
+    const familyCheckbox = checkboxes.find(input => input.value === "family");
+    if (familyCheckbox) familyCheckbox.checked = false;
+  }
+});
+
+document.getElementById("eventForm").addEventListener("submit", event => {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  const title = document.getElementById("eventTitle").value.trim();
+  const date = document.getElementById("eventDate").value;
+  if (!title || !date) return;
+  const owners = [...document.querySelectorAll('#eventOwnerChecks input:checked')].map(input => input.value);
+  if (!owners.length) { showToast("予定の人を1人以上選んでください"); return; }
+  const savedEvent = {
+    id: document.getElementById("eventId").value || crypto.randomUUID(),
+    date,
+    title,
+    startTime: document.getElementById("eventStartTime").value,
+    endTime: document.getElementById("eventEndTime").value,
+    owners
+  };
+  const savedEventIndex = state.events.findIndex(item => item.id === savedEvent.id);
+  const eventMode = document.getElementById("eventMode").value;
+  if (savedEventIndex >= 0 && state.events[savedEventIndex].externalUid) savedEvent.externalUid = state.events[savedEventIndex].externalUid;
+  if (savedEventIndex >= 0) state.events[savedEventIndex] = savedEvent; else state.events.push(savedEvent);
+  state.selectedDate = date;
+  state.calendarDate = date;
+  saveState(eventMode === "copy" ? "予定をコピーしました" : (savedEventIndex >= 0 ? "予定を変更しました" : "予定を追加しました"));
+  document.getElementById("eventDialog").close();
+  renderAll();
+});
+
+document.getElementById("taskForm").addEventListener("submit", event => {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  const title = document.getElementById("taskTitle").value.trim();
+  const scheduleType = document.getElementById("taskScheduleType").value;
+  const weekdays = [...document.querySelectorAll("#weekdayChecks input:checked")].map(input => Number(input.value));
+  const onceDate = document.getElementById("taskOnceDate").value;
+  const anytimeStartDate = document.getElementById("taskAnytimeStartDate").value;
+  const biweeklyStartDate = document.getElementById("taskBiweeklyStartDate").value;
+  if (!title) return;
+  if (scheduleType === "once" && !onceDate) { showToast("実行日を選んでください"); return; }
+  if (scheduleType === "anytime" && !anytimeStartDate) { showToast("表示を始める日を選んでください"); return; }
+  if (scheduleType === "weekly" && !weekdays.length) { showToast("表示する曜日を選んでください"); return; }
+  if (scheduleType === "biweekly" && !biweeklyStartDate) { showToast("最初にやる日を選んでください"); return; }
+  const task = {
+    id: document.getElementById("taskId").value || crypto.randomUUID(),
+    title,
+    category: document.getElementById("taskCategory").value,
+    assignee: document.getElementById("taskAssignee").value,
+    scheduleType,
+    weekdays: scheduleType === "weekly" ? weekdays : [],
+    onceDate: scheduleType === "once" ? onceDate : "",
+    anytimeStartDate: scheduleType === "anytime" ? anytimeStartDate : "",
+    biweeklyStartDate: scheduleType === "biweekly" ? biweeklyStartDate : "",
+    active: document.getElementById("taskActive").checked
+  };
+  const index = state.tasks.findIndex(item => item.id === task.id);
+  if (index >= 0) state.tasks[index] = task; else state.tasks.push(task);
+  saveState(index >= 0 ? "変更を保存しました" : "やることを追加しました");
+  document.getElementById("taskDialog").close();
+  renderAll();
+});
+
+document.getElementById("backupExportButton").addEventListener("click", () => {
+  const backup = {
+    app: "summer-board",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    state
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `夏やすみボード-バックアップ-${toDateKey(new Date())}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("バックアップを保存しました");
+});
+
+document.getElementById("backupImportButton").addEventListener("click", () => {
+  document.getElementById("backupImportInput").click();
+});
+
+document.getElementById("backupImportInput").addEventListener("change", async event => {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const backup = JSON.parse(await file.text());
+    const importedState = backup?.app === "summer-board" ? backup.state : backup;
+    if (!importedState?.tasks || !importedState?.people || !importedState?.events || !importedState?.completions) throw new Error("invalid backup");
+    if (!window.confirm("現在のデータをバックアップの内容に置き換えますか？")) return;
+    importedState.people = importedState.people.map(person => person.id === "child2" ? { ...person, color: "#69b98b" } : person);
+    importedState.tasks = importedState.tasks.map(task => ({
+      ...task,
+      scheduleType: task.scheduleType || (task.weekdays?.length === 7 ? "daily" : "weekly"),
+      weekdays: task.weekdays || []
+    }));
+    state = importedState;
+    saveState("バックアップを読み込みました");
+    renderAll();
+  } catch {
+    showToast("バックアップファイルを読み込めませんでした");
+  } finally {
+    input.value = "";
+  }
+});
+
+document.getElementById("authForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!cloud.client) return;
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  showAuthMessage("ログインしています…");
+  const { error } = await cloud.client.auth.signInWithPassword({ email, password });
+  if (error) showAuthMessage("ログインできませんでした。メールアドレスとパスワードを確認してください。");
+});
+
+document.getElementById("signUpButton").addEventListener("click", async () => {
+  if (!cloud.client) return;
+  const form = document.getElementById("authForm");
+  if (!form.reportValidity()) return;
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  showAuthMessage("家族用ログインを作っています…");
+  const { data, error } = await cloud.client.auth.signUp({ email, password });
+  if (error) {
+    showAuthMessage("作成できませんでした。別のメールアドレスか、8文字以上のパスワードを試してください。");
+  } else if (!data.session) {
+    showAuthMessage("確認メールを送りました。メール内のリンクを開いてから、ここでログインしてください。");
+  }
+});
+
+document.getElementById("signOutButton").addEventListener("click", async () => {
+  if (!cloud.client || !window.confirm("この端末からログアウトしますか？")) return;
+  await cloud.client.auth.signOut();
+  cloud.ready = false;
+  cloud.user = null;
+  cloud.familyId = null;
+  document.getElementById("signOutButton").hidden = true;
+  document.getElementById("authPassword").value = "";
+  document.getElementById("authScreen").hidden = false;
+  showAuthMessage("ログアウトしました。");
+});
+
+renderAll();
+initializeOnlineApp();
