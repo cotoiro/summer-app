@@ -34,8 +34,8 @@ begin
   insert into public.family_members (family_id, profile_key, display_name, color, role, sort_order)
   values
     (new_family_id, 'parent', 'おかあ', '#e9969f', 'parent', 0),
-    (new_family_id, 'child1', 'りょういち', '#72a9dc', 'child', 1),
-    (new_family_id, 'child2', 'しゅんや', '#69b98b', 'child', 2);
+    (new_family_id, 'child1', 'りょう', '#72a9dc', 'child', 1),
+    (new_family_id, 'child2', 'しゅん', '#69b98b', 'child', 2);
 
   return new_family_id;
 end;

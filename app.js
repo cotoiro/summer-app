@@ -1,6 +1,10 @@
 const STORAGE_KEY = "summer-board-prototype-v1";
 const DAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 const PARENT = { id: "parent", name: "おかあ", color: "#e9969f" };
+const CHILD_DISPLAY = {
+  child1: { name: "りょう", color: "#72a9dc" },
+  child2: { name: "しゅん", color: "#69b98b" }
+};
 const cloud = {
   client: null,
   user: null,
@@ -29,8 +33,8 @@ function createInitialState() {
   tomorrow.setDate(tomorrow.getDate() + 1);
   return {
     people: [
-      { id: "child1", name: "りょういち", color: "#72a9dc" },
-      { id: "child2", name: "しゅんや", color: "#69b98b" }
+      { id: "child1", name: "りょう", color: "#72a9dc" },
+      { id: "child2", name: "しゅん", color: "#69b98b" }
     ],
     selectedPerson: "child1",
     selectedDate: todayKey,
@@ -60,7 +64,7 @@ function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (saved?.tasks && saved?.people) {
-      saved.people = saved.people.map(person => person.id === "child2" ? { ...person, color: "#69b98b" } : person);
+      saved.people = normalizePeople(saved.people);
       saved.tasks = saved.tasks.map(task => ({
         ...task,
         scheduleType: task.scheduleType || (task.weekdays?.length === 7 ? "daily" : "weekly"),
@@ -72,6 +76,10 @@ function loadState() {
   } catch {
     return createInitialState();
   }
+}
+
+function normalizePeople(people) {
+  return people.map(person => CHILD_DISPLAY[person.id] ? { ...person, ...CHILD_DISPLAY[person.id] } : person);
 }
 
 function saveState(message) {
@@ -217,7 +225,7 @@ async function loadCloudState() {
   const error = [profileResult, taskResult, eventResult, completionResult].find(result => result.error)?.error;
   if (error) throw error;
 
-  const children = profileResult.data.filter(member => member.role === "child").map(member => ({ id: member.profile_key, name: member.display_name, color: member.color }));
+  const children = normalizePeople(profileResult.data.filter(member => member.role === "child").map(member => ({ id: member.profile_key, name: member.display_name, color: member.color })));
   if (children.length) state.people = children;
   state.tasks = taskResult.data.map(taskFromCloud);
   state.events = eventResult.data.map(eventFromCloud);
@@ -704,11 +712,11 @@ function renderCalendarHelp() {
 }
 
 function renderManage() {
-  const filters = [{ id: "all", name: "すべて" }, ...state.people.map(person => ({ id: person.id, name: person.name })), { id: "both", name: "ふたり共通" }];
+  const filters = [{ id: "all", name: "すべて" }, ...state.people.map(person => ({ id: person.id, name: person.name })), { id: "both", name: "ふたり" }];
   document.getElementById("manageFilters").innerHTML = filters.map(filter => `<button class="filter-chip ${state.manageFilter === filter.id ? "active" : ""}" type="button" data-manage-filter="${filter.id}">${filter.name}</button>`).join("");
   const tasks = state.tasks.filter(task => state.manageFilter === "all" || task.assignee === state.manageFilter);
   document.getElementById("manageTaskList").innerHTML = tasks.length ? tasks.map(task => {
-    const assignee = task.assignee === "both" ? "ふたり共通" : personById(task.assignee)?.name;
+    const assignee = task.assignee === "both" ? "ふたり" : personById(task.assignee)?.name;
     const schedule = taskScheduleDescription(task);
     return `<article class="manage-card ${task.active ? "" : "inactive"}">
       <div class="manage-card-top"><div><span class="category-label ${task.category === "help" ? "help" : ""}">${task.category === "study" ? "宿題・勉強" : "お手伝い"}</span><h3>${escapeHtml(task.title)}</h3></div>
@@ -721,7 +729,7 @@ function renderManage() {
 function fillOwnerControls() {
   const owners = [{ id: "family", name: "家族みんな", color: "#f0a64b" }, PARENT, ...state.people];
   document.getElementById("eventOwnerChecks").innerHTML = owners.map(owner => `<label><input type="checkbox" value="${owner.id}"><span style="--owner-choice-color:${owner.color}">${owner.name}</span></label>`).join("");
-  document.getElementById("taskAssignee").innerHTML = `${state.people.map(person => `<option value="${person.id}">${person.name}</option>`).join("")}<option value="both">ふたり共通</option>`;
+  document.getElementById("taskAssignee").innerHTML = `${state.people.map(person => `<option value="${person.id}">${person.name}</option>`).join("")}<option value="both">ふたり</option>`;
 }
 
 function switchView(view) {
