@@ -528,6 +528,7 @@ function renderPersonSwitch() {
 function renderToday() {
   const selected = parseDateKey(state.selectedDate);
   const todayKey = toDateKey(new Date());
+  document.getElementById("todayTodayButton").hidden = state.selectedDate === todayKey;
   document.getElementById("todayLabel").textContent = state.selectedDate === todayKey ? "きょう" : state.selectedDate < todayKey ? "この日の記録" : "これからの予定";
   document.getElementById("selectedDateTitle").textContent = formatLongDate(state.selectedDate);
 
@@ -766,6 +767,13 @@ document.addEventListener("click", event => {
 
 document.getElementById("previousDayButton").addEventListener("click", () => moveSelectedDate(-1));
 document.getElementById("nextDayButton").addEventListener("click", () => moveSelectedDate(1));
+document.getElementById("todayTodayButton").addEventListener("click", () => {
+  const todayKey = toDateKey(new Date());
+  state.selectedDate = todayKey;
+  state.calendarDate = todayKey;
+  saveState("今日に戻りました");
+  renderAll();
+});
 document.getElementById("previousMonthButton").addEventListener("click", () => moveCalendarMonth(-1));
 document.getElementById("nextMonthButton").addEventListener("click", () => moveCalendarMonth(1));
 document.getElementById("calendarTodayButton").addEventListener("click", () => {
