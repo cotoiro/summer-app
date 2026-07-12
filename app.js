@@ -6,8 +6,8 @@ const cloud = {
   user: null,
   familyId: null,
   ready: false,
-  syncTimer: null,
-  syncing: false
+  syncing: false,
+  refreshTimer: null
 };
 
 function toDateKey(date) {
@@ -76,13 +76,7 @@ function loadState() {
 
 function saveState(message) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  const status = document.getElementById("saveStatus");
-  if (cloud.ready) {
-    status.innerHTML = "<span></span> 同期準備中";
-    queueCloudSync();
-  } else {
-    status.innerHTML = "<span></span> この端末に保存中";
-  }
+  setSaveStatus(cloud.ready ? "家族と同期済み" : "この端末に保存中");
   if (message) showToast(message);
 }
 
@@ -136,6 +130,83 @@ function cloudCompletionRows() {
     });
 }
 
+function taskToCloudRow(task) {
+  return {
+    id: task.id,
+    family_id: cloud.familyId,
+    title: task.title,
+    category: task.category,
+    assignee_key: task.assignee,
+    schedule_type: task.scheduleType,
+    schedule: scheduleForCloud(task),
+    active: task.active
+  };
+}
+
+function eventToCloudRow(item) {
+  return {
+    id: item.id,
+    family_id: cloud.familyId,
+    event_date: item.date,
+    title: item.title,
+    start_time: item.startTime || null,
+    end_time: item.endTime || null,
+    owner_keys: eventOwnerIds(item),
+    external_uid: item.externalUid || null
+  };
+}
+
+async function runCloudWrite(writeAction) {
+  if (!cloud.ready) return;
+  cloud.syncing = true;
+  setSaveStatus("同期中…");
+  try {
+    const result = await writeAction();
+    if (result?.error) throw result.error;
+    setSaveStatus("家族と同期済み");
+  } catch (error) {
+    console.error(error);
+    setSaveStatus("同期できませんでした", true);
+    showToast("同期できませんでした。通信を確認してください");
+  } finally {
+    cloud.syncing = false;
+  }
+}
+
+function syncTask(task) {
+  return runCloudWrite(() => cloud.client.from("tasks").upsert(taskToCloudRow(task)));
+}
+
+function deleteCloudTask(taskId) {
+  return runCloudWrite(() => cloud.client.from("tasks").delete().eq("family_id", cloud.familyId).eq("id", taskId));
+}
+
+function syncEvent(item) {
+  return runCloudWrite(() => cloud.client.from("calendar_events").upsert(eventToCloudRow(item)));
+}
+
+function syncEvents(items) {
+  if (!items.length) return Promise.resolve();
+  return runCloudWrite(() => cloud.client.from("calendar_events").upsert(items.map(eventToCloudRow)));
+}
+
+function deleteCloudEvent(eventId) {
+  return runCloudWrite(() => cloud.client.from("calendar_events").delete().eq("family_id", cloud.familyId).eq("id", eventId));
+}
+
+function syncCompletion(taskId, memberKey, completedOn, completed) {
+  if (completed) {
+    return runCloudWrite(() => cloud.client.from("task_completions").upsert({
+      family_id: cloud.familyId,
+      task_id: taskId,
+      member_key: memberKey,
+      completed_on: completedOn
+    }));
+  }
+  return runCloudWrite(() => cloud.client.from("task_completions").delete()
+    .eq("family_id", cloud.familyId).eq("task_id", taskId).eq("member_key", memberKey).eq("completed_on", completedOn));
+}
+
 async function loadCloudState() {
   const [profileResult, taskResult, eventResult, completionResult] = await Promise.all([
     cloud.client.from("family_members").select("profile_key, display_name, color, role, sort_order").eq("family_id", cloud.familyId).order("sort_order"),
@@ -167,15 +238,8 @@ async function syncCloudState() {
   cloud.syncing = true;
   setSaveStatus("同期中…");
   try {
-    const taskRows = state.tasks.map(task => ({
-      id: task.id, family_id: cloud.familyId, title: task.title, category: task.category,
-      assignee_key: task.assignee, schedule_type: task.scheduleType, schedule: scheduleForCloud(task), active: task.active
-    }));
-    const eventRows = state.events.map(item => ({
-      id: item.id, family_id: cloud.familyId, event_date: item.date, title: item.title,
-      start_time: item.startTime || null, end_time: item.endTime || null,
-      owner_keys: eventOwnerIds(item), external_uid: item.externalUid || null
-    }));
+    const taskRows = state.tasks.map(taskToCloudRow);
+    const eventRows = state.events.map(eventToCloudRow);
     const completionRows = cloudCompletionRows();
     if (taskRows.length) {
       const { error } = await cloud.client.from("tasks").upsert(taskRows);
@@ -209,9 +273,16 @@ async function syncCloudState() {
   }
 }
 
-function queueCloudSync() {
-  clearTimeout(cloud.syncTimer);
-  cloud.syncTimer = window.setTimeout(syncCloudState, 450);
+async function refreshCloudState() {
+  if (!cloud.ready || cloud.syncing || document.querySelector("dialog[open]")) return;
+  try {
+    await loadCloudState();
+    renderAll();
+    setSaveStatus("家族と同期済み");
+  } catch (error) {
+    console.error(error);
+    setSaveStatus("更新を確認できませんでした", true);
+  }
 }
 
 function showAuthMessage(message) {
@@ -244,6 +315,8 @@ async function startFamilySession(user) {
   document.getElementById("signOutButton").hidden = false;
   setSaveStatus("家族と同期済み");
   renderAll();
+  clearInterval(cloud.refreshTimer);
+  cloud.refreshTimer = window.setInterval(refreshCloudState, 12000);
 }
 
 async function initializeOnlineApp() {
@@ -438,17 +511,19 @@ function importIcsEvents(importedEvents) {
   const knownFingerprints = new Set(state.events.map(eventFingerprint));
   let importedCount = 0;
   let skippedCount = 0;
+  const addedEvents = [];
   importedEvents.forEach(event => {
     if ((event.externalUid && knownUids.has(event.externalUid)) || knownFingerprints.has(eventFingerprint(event))) {
       skippedCount += 1;
       return;
     }
     state.events.push(event);
+    addedEvents.push(event);
     if (event.externalUid) knownUids.add(event.externalUid);
     knownFingerprints.add(eventFingerprint(event));
     importedCount += 1;
   });
-  return { importedCount, skippedCount };
+  return { importedCount, skippedCount, addedEvents };
 }
 
 function formatLongDate(key) {
@@ -731,25 +806,35 @@ document.addEventListener("click", event => {
   if (target.dataset.nav) switchView(target.dataset.nav);
   if (target.dataset.person) { state.selectedPerson = target.dataset.person; saveState(); renderAll(); }
   if (target.dataset.toggleTask) {
-    const key = completionKey(state.selectedDate, state.selectedPerson, target.dataset.toggleTask);
+    const taskId = target.dataset.toggleTask;
+    const personId = state.selectedPerson;
+    const completedOn = state.selectedDate;
+    const key = completionKey(completedOn, personId, taskId);
     state.completions[key] = !state.completions[key];
     if (!state.completions[key]) delete state.completions[key];
     saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
+    syncCompletion(taskId, personId, completedOn, Boolean(state.completions[key]));
     renderToday();
   }
   if (target.dataset.toggleCalendarTask) {
-    const key = completionKey(state.selectedDate, target.dataset.calendarPerson, target.dataset.toggleCalendarTask);
+    const taskId = target.dataset.toggleCalendarTask;
+    const personId = target.dataset.calendarPerson;
+    const completedOn = state.selectedDate;
+    const key = completionKey(completedOn, personId, taskId);
     state.completions[key] = !state.completions[key];
     if (!state.completions[key]) delete state.completions[key];
     saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
+    syncCompletion(taskId, personId, completedOn, Boolean(state.completions[key]));
     renderAll();
   }
   if (target.hasAttribute("data-open-event")) openEventDialog();
   if (target.dataset.copyEvent) openEventDialog(target.dataset.copyEvent, "copy");
   if (target.dataset.editEvent) openEventDialog(target.dataset.editEvent);
   if (target.dataset.deleteEvent) {
-    state.events = state.events.filter(item => item.id !== target.dataset.deleteEvent);
+    const deletedEventId = target.dataset.deleteEvent;
+    state.events = state.events.filter(item => item.id !== deletedEventId);
     saveState("予定を削除しました"); renderAll();
+    deleteCloudEvent(deletedEventId);
   }
   if (target.dataset.calendarDay) { state.selectedDate = target.dataset.calendarDay; state.calendarDate = target.dataset.calendarDay; saveState(); renderAll(); }
   if (target.dataset.manageFilter) { state.manageFilter = target.dataset.manageFilter; saveState(); renderManage(); }
@@ -760,6 +845,7 @@ document.addEventListener("click", event => {
       state.tasks = state.tasks.filter(item => item.id !== deletedTaskId);
       Object.keys(state.completions).filter(key => key.endsWith(`:${deletedTaskId}`)).forEach(key => { delete state.completions[key]; });
       saveState("削除しました");
+      deleteCloudTask(deletedTaskId);
       renderAll();
     }
   }
@@ -811,6 +897,7 @@ document.getElementById("icsImportInput").addEventListener("change", async event
       state.selectedDate = importedEvents[0].date;
       state.calendarDate = importedEvents[0].date;
       saveState(`${result.importedCount}件の予定を読み込みました`);
+      syncEvents(result.addedEvents);
       renderAll();
     } else {
       showToast("すべて登録済みの予定です");
@@ -858,6 +945,7 @@ document.getElementById("eventForm").addEventListener("submit", event => {
   state.selectedDate = date;
   state.calendarDate = date;
   saveState(eventMode === "copy" ? "予定をコピーしました" : (savedEventIndex >= 0 ? "予定を変更しました" : "予定を追加しました"));
+  syncEvent(savedEvent);
   document.getElementById("eventDialog").close();
   renderAll();
 });
@@ -891,6 +979,7 @@ document.getElementById("taskForm").addEventListener("submit", event => {
   const index = state.tasks.findIndex(item => item.id === task.id);
   if (index >= 0) state.tasks[index] = task; else state.tasks.push(task);
   saveState(index >= 0 ? "変更を保存しました" : "やることを追加しました");
+  syncTask(task);
   document.getElementById("taskDialog").close();
   renderAll();
 });
@@ -935,6 +1024,7 @@ document.getElementById("backupImportInput").addEventListener("change", async ev
     }));
     state = importedState;
     saveState("バックアップを読み込みました");
+    syncCloudState();
     renderAll();
   } catch {
     showToast("バックアップファイルを読み込めませんでした");
@@ -972,12 +1062,18 @@ document.getElementById("signOutButton").addEventListener("click", async () => {
   if (!cloud.client || !window.confirm("この端末からログアウトしますか？")) return;
   await cloud.client.auth.signOut();
   cloud.ready = false;
+  clearInterval(cloud.refreshTimer);
   cloud.user = null;
   cloud.familyId = null;
   document.getElementById("signOutButton").hidden = true;
   document.getElementById("authPassword").value = "";
   document.getElementById("authScreen").hidden = false;
   showAuthMessage("ログアウトしました。");
+});
+
+window.addEventListener("focus", refreshCloudState);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshCloudState();
 });
 
 renderAll();
