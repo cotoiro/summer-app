@@ -70,7 +70,8 @@ function loadState() {
       saved.tasks = saved.tasks.map(task => ({
         ...task,
         scheduleType: task.scheduleType || (task.weekdays?.length === 7 ? "daily" : "weekly"),
-        weekdays: task.weekdays || []
+        weekdays: task.weekdays || [],
+        dateMoves: task.dateMoves || []
       }));
       saved.dailyNotes = saved.dailyNotes || {};
       return saved;
@@ -101,7 +102,8 @@ function scheduleForCloud(task) {
     weekdays: task.weekdays || [],
     onceDate: task.onceDate || "",
     anytimeStartDate: task.anytimeStartDate || "",
-    biweeklyStartDate: task.biweeklyStartDate || ""
+    biweeklyStartDate: task.biweeklyStartDate || "",
+    dateMoves: task.dateMoves || []
   };
 }
 
@@ -116,6 +118,7 @@ function taskFromCloud(row) {
     onceDate: row.schedule?.onceDate || "",
     anytimeStartDate: row.schedule?.anytimeStartDate || "",
     biweeklyStartDate: row.schedule?.biweeklyStartDate || "",
+    dateMoves: row.schedule?.dateMoves || [],
     active: row.active
   };
 }
@@ -600,7 +603,7 @@ function anytimeCompletionDate(taskId, personId) {
   return Object.keys(state.completions).filter(key => state.completions[key] && key.endsWith(suffix)).map(key => key.slice(0, 10)).sort()[0] || "";
 }
 
-function taskMatchesDate(task, dateKey, personId) {
+function taskMatchesBaseDate(task, dateKey, personId) {
   if (task.scheduleType === "once") return task.onceDate === dateKey;
   if (task.scheduleType === "anytime") {
     if (!task.anytimeStartDate || dateKey < task.anytimeStartDate) return false;
@@ -614,6 +617,16 @@ function taskMatchesDate(task, dateKey, personId) {
     return difference >= 0 && difference % 14 === 0;
   }
   return (task.weekdays || []).includes(parseDateKey(dateKey).getDay());
+}
+
+function taskMoveForDisplayedDate(task, dateKey) {
+  return (task.dateMoves || []).find(move => move.to === dateKey);
+}
+
+function taskMatchesDate(task, dateKey, personId) {
+  if (taskMoveForDisplayedDate(task, dateKey)) return true;
+  if ((task.dateMoves || []).some(move => move.from === dateKey)) return false;
+  return taskMatchesBaseDate(task, dateKey, personId);
 }
 
 function tasksFor(dateKey, personId) {
@@ -748,10 +761,16 @@ function renderCalendarHelp() {
     const completed = helpTasks.filter(task => isTaskDone(task.id, state.selectedDate, person.id)).length;
     const taskList = helpTasks.length ? helpTasks.map(task => {
       const done = isTaskDone(task.id, state.selectedDate, person.id);
-      return `<button class="task-card calendar-help-task ${done ? "done" : ""}" type="button" data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}">
-        <span class="task-check">✓</span>
-        <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${done ? "できた！" : "タップしてチェック"}</span></span>
-      </button>`;
+      const move = taskMoveForDisplayedDate(task, state.selectedDate);
+      return `<div class="calendar-help-task-row">
+        <button class="task-card calendar-help-task ${done ? "done" : ""}" type="button" data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}">
+          <span class="task-check">✓</span>
+          <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${move ? `${formatLongDate(move.from)}から移動` : (done ? "できた！" : "タップしてチェック")}</span></span>
+        </button>
+        <button class="task-move-button" type="button" data-move-task="${task.id}" data-calendar-person="${person.id}" aria-label="${move ? "移動先を変更" : "今回だけ移動"}" title="${move ? "移動先を変更" : "今回だけ移動"}">
+          <span aria-hidden="true">→</span>
+        </button>
+      </div>`;
     }).join("") : '<p class="calendar-help-empty">この日のお手伝いはありません</p>';
     return `<section class="calendar-person-help" style="--person-color:${person.color}">
       <div class="calendar-person-heading"><span class="calendar-person-name">${person.name}</span><span class="calendar-person-count">${completed} / ${helpTasks.length}</span></div>
@@ -853,6 +872,20 @@ function openTaskDialog(taskId) {
   setTimeout(() => document.getElementById("taskTitle").focus(), 50);
 }
 
+function openTaskMoveDialog(taskId, personId) {
+  const task = state.tasks.find(item => item.id === taskId);
+  if (!task) return;
+  const existingMove = taskMoveForDisplayedDate(task, state.selectedDate);
+  document.getElementById("moveTaskId").value = task.id;
+  document.getElementById("moveTaskPerson").value = personId;
+  document.getElementById("moveTaskFromDate").value = existingMove?.from || state.selectedDate;
+  document.getElementById("moveTaskName").textContent = task.title;
+  document.getElementById("moveTaskDateDescription").textContent = `${formatLongDate(existingMove?.from || state.selectedDate)}のお手伝いを移動します。`;
+  document.getElementById("moveTaskToDate").value = existingMove?.to || state.selectedDate;
+  document.getElementById("cancelTaskMoveButton").hidden = !existingMove;
+  document.getElementById("taskMoveDialog").showModal();
+}
+
 function escapeHtml(value) {
   return value.replace(/[&<>'"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" })[character]);
 }
@@ -884,6 +917,7 @@ document.addEventListener("click", event => {
     syncCompletion(taskId, personId, completedOn, Boolean(state.completions[key]));
     renderAll();
   }
+  if (target.dataset.moveTask) openTaskMoveDialog(target.dataset.moveTask, target.dataset.calendarPerson);
   if (target.hasAttribute("data-open-event")) openEventDialog();
   if (target.dataset.copyEvent) openEventDialog(target.dataset.copyEvent, "copy");
   if (target.dataset.editEvent) openEventDialog(target.dataset.editEvent);
@@ -1045,13 +1079,47 @@ document.getElementById("taskForm").addEventListener("submit", event => {
     onceDate: scheduleType === "once" ? onceDate : "",
     anytimeStartDate: scheduleType === "anytime" ? anytimeStartDate : "",
     biweeklyStartDate: scheduleType === "biweekly" ? biweeklyStartDate : "",
-    active: document.getElementById("taskActive").checked
+    active: document.getElementById("taskActive").checked,
+    dateMoves: state.tasks.find(item => item.id === document.getElementById("taskId").value)?.dateMoves || []
   };
   const index = state.tasks.findIndex(item => item.id === task.id);
   if (index >= 0) state.tasks[index] = task; else state.tasks.push(task);
   saveState(index >= 0 ? "変更を保存しました" : "やることを追加しました");
   syncTask(task);
   document.getElementById("taskDialog").close();
+  renderAll();
+});
+
+document.getElementById("taskMoveForm").addEventListener("submit", event => {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  const task = state.tasks.find(item => item.id === document.getElementById("moveTaskId").value);
+  const personId = document.getElementById("moveTaskPerson").value;
+  const from = document.getElementById("moveTaskFromDate").value;
+  const to = document.getElementById("moveTaskToDate").value;
+  if (!task || !to) return;
+  if (from === to) { showToast("移動先は別の日を選んでください"); return; }
+  if (taskMatchesBaseDate(task, to, personId)) { showToast("そのお手伝いは移動先にも予定されています"); return; }
+  if ((task.dateMoves || []).some(move => move.from !== from && move.to === to)) { showToast("同じお手伝いがすでにその日へ移動されています"); return; }
+  task.dateMoves = [...(task.dateMoves || []).filter(move => move.from !== from), { from, to }];
+  state.selectedDate = to;
+  state.calendarDate = to;
+  saveState(`${formatLongDate(to)}へ移動しました`);
+  syncTask(task);
+  document.getElementById("taskMoveDialog").close();
+  renderAll();
+});
+
+document.getElementById("cancelTaskMoveButton").addEventListener("click", () => {
+  const task = state.tasks.find(item => item.id === document.getElementById("moveTaskId").value);
+  const from = document.getElementById("moveTaskFromDate").value;
+  if (!task) return;
+  task.dateMoves = (task.dateMoves || []).filter(move => move.from !== from);
+  state.selectedDate = from;
+  state.calendarDate = from;
+  saveState("移動を取り消しました");
+  syncTask(task);
+  document.getElementById("taskMoveDialog").close();
   renderAll();
 });
 
@@ -1091,7 +1159,8 @@ document.getElementById("backupImportInput").addEventListener("change", async ev
     importedState.tasks = importedState.tasks.map(task => ({
       ...task,
       scheduleType: task.scheduleType || (task.weekdays?.length === 7 ? "daily" : "weekly"),
-      weekdays: task.weekdays || []
+      weekdays: task.weekdays || [],
+      dateMoves: task.dateMoves || []
     }));
     importedState.dailyNotes = importedState.dailyNotes || {};
     state = importedState;

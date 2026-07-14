@@ -260,9 +260,25 @@
       </form>
     </dialog>
 
+    <dialog id="taskMoveDialog">
+      <form method="dialog" id="taskMoveForm" class="dialog-card">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">いつもの曜日は変わりません</p><h2>今回だけ移動</h2></div>
+          <button class="close-button" value="cancel" type="submit" formnovalidate aria-label="閉じる">×</button>
+        </div>
+        <input id="moveTaskId" type="hidden" />
+        <input id="moveTaskPerson" type="hidden" />
+        <input id="moveTaskFromDate" type="hidden" />
+        <p class="move-task-name" id="moveTaskName"></p>
+        <p class="schedule-hint move-task-description" id="moveTaskDateDescription"></p>
+        <label>移動先の日付<input id="moveTaskToDate" type="date" required /></label>
+        <div class="dialog-actions"><button class="text-button move-cancel-button" id="cancelTaskMoveButton" type="button" hidden>移動を取り消す</button><button class="secondary-button" value="cancel" type="submit" formnovalidate>やめる</button><button class="primary-button" value="default" type="submit">移動する</button></div>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
-    <script src="app.js?v=20260715-daily-notes"></script>
+    <script src="app.js?v=20260715-task-moves"></script>
   </body>
 </html>
