@@ -49,6 +49,7 @@ function createInitialState() {
       { id: crypto.randomUUID(), title: "洗濯ものをたたむ", category: "help", assignee: "child2", scheduleType: "weekly", weekdays: [1, 3, 5], active: true }
     ],
     completions: {},
+    dailyNotes: {},
     events: [
       { id: crypto.randomUUID(), date: todayKey, title: "夏休みの予定を家族で確認", startTime: "19:00", endTime: "19:30", owner: "family" },
       { id: crypto.randomUUID(), date: toDateKey(tomorrow), title: "塾", startTime: "10:00", endTime: "11:00", owner: "child1" }
@@ -59,6 +60,7 @@ function createInitialState() {
 let state = loadState();
 let currentView = "today";
 let toastTimer;
+const dailyNoteTimers = {};
 
 function loadState() {
   try {
@@ -70,6 +72,7 @@ function loadState() {
         scheduleType: task.scheduleType || (task.weekdays?.length === 7 ? "daily" : "weekly"),
         weekdays: task.weekdays || []
       }));
+      saved.dailyNotes = saved.dailyNotes || {};
       return saved;
     }
     return createInitialState();
@@ -135,6 +138,27 @@ function cloudCompletionRows() {
     .map(([key]) => {
       const [completedOn, memberKey, taskId] = key.split(":");
       return { family_id: cloud.familyId, task_id: taskId, member_key: memberKey, completed_on: completedOn };
+    });
+}
+
+function dailyNoteKey(dateKey, personId, category) {
+  return `${dateKey}:${personId}:${category}`;
+}
+
+function dailyNoteValue(dateKey, personId, category) {
+  return state.dailyNotes?.[dailyNoteKey(dateKey, personId, category)] || "";
+}
+
+function dailyNoteFromCloud(row) {
+  return [dailyNoteKey(row.note_date, row.member_key, row.category), row.body || ""];
+}
+
+function cloudDailyNoteRows() {
+  return Object.entries(state.dailyNotes || {})
+    .filter(([, body]) => body.trim())
+    .map(([key, body]) => {
+      const [note_date, member_key, category] = key.split(":");
+      return { family_id: cloud.familyId, note_date, member_key, category, body: body.trim() };
     });
 }
 
@@ -215,6 +239,21 @@ function syncCompletion(taskId, memberKey, completedOn, completed) {
     .eq("family_id", cloud.familyId).eq("task_id", taskId).eq("member_key", memberKey).eq("completed_on", completedOn));
 }
 
+function syncDailyNote(dateKey, memberKey, category, body) {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return runCloudWrite(() => cloud.client.from("daily_notes").delete()
+      .eq("family_id", cloud.familyId).eq("note_date", dateKey).eq("member_key", memberKey).eq("category", category));
+  }
+  return runCloudWrite(() => cloud.client.from("daily_notes").upsert({
+    family_id: cloud.familyId,
+    note_date: dateKey,
+    member_key: memberKey,
+    category,
+    body: trimmed
+  }));
+}
+
 async function loadCloudState() {
   const [profileResult, taskResult, eventResult, completionResult] = await Promise.all([
     cloud.client.from("family_members").select("profile_key, display_name, color, role, sort_order").eq("family_id", cloud.familyId).order("sort_order"),
@@ -230,6 +269,9 @@ async function loadCloudState() {
   state.tasks = taskResult.data.map(taskFromCloud);
   state.events = eventResult.data.map(eventFromCloud);
   state.completions = Object.fromEntries(completionResult.data.map(row => [completionKey(row.completed_on, row.member_key, row.task_id), true]));
+  const { data: noteRows, error: noteError } = await cloud.client
+    .from("daily_notes").select("note_date, member_key, category, body").eq("family_id", cloud.familyId);
+  if (!noteError) state.dailyNotes = Object.fromEntries(noteRows.map(dailyNoteFromCloud));
   if (!state.people.some(person => person.id === state.selectedPerson)) state.selectedPerson = state.people[0]?.id || "child1";
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
@@ -249,6 +291,7 @@ async function syncCloudState() {
     const taskRows = state.tasks.map(taskToCloudRow);
     const eventRows = state.events.map(eventToCloudRow);
     const completionRows = cloudCompletionRows();
+    const dailyNoteRows = cloudDailyNoteRows();
     if (taskRows.length) {
       const { error } = await cloud.client.from("tasks").upsert(taskRows);
       if (error) throw error;
@@ -259,6 +302,10 @@ async function syncCloudState() {
     }
     if (completionRows.length) {
       const { error } = await cloud.client.from("task_completions").upsert(completionRows);
+      if (error) throw error;
+    }
+    if (dailyNoteRows.length) {
+      const { error } = await cloud.client.from("daily_notes").upsert(dailyNoteRows);
       if (error) throw error;
     }
     await removeMissingCloudRows("tasks", new Set(state.tasks.map(task => task.id)));
@@ -664,6 +711,8 @@ function renderTaskCategory(category, tasks) {
       <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">タップして${done ? "もとに戻す" : "できた！にする"}</span></span>
     </button>`;
   }).join("") : '<p class="empty-state">この日のやることはありません</p>';
+  const note = document.getElementById(`${category}DailyNote`);
+  if (document.activeElement !== note) note.value = dailyNoteValue(state.selectedDate, state.selectedPerson, category);
 }
 
 function renderCalendar() {
@@ -919,6 +968,20 @@ document.getElementById("icsImportInput").addEventListener("change", async event
 document.getElementById("openTaskButton").addEventListener("click", () => openTaskDialog());
 document.getElementById("taskScheduleType").addEventListener("change", updateTaskScheduleFields);
 
+["study", "help"].forEach(category => {
+  document.getElementById(`${category}DailyNote`).addEventListener("input", event => {
+    const noteDate = state.selectedDate;
+    const personId = state.selectedPerson;
+    const key = dailyNoteKey(noteDate, personId, category);
+    state.dailyNotes[key] = event.target.value;
+    saveState();
+    clearTimeout(dailyNoteTimers[category]);
+    dailyNoteTimers[category] = setTimeout(() => {
+      syncDailyNote(noteDate, personId, category, state.dailyNotes[key]);
+    }, 700);
+  });
+});
+
 document.getElementById("eventOwnerChecks").addEventListener("change", event => {
   if (!event.target.matches('input[type="checkbox"]') || !event.target.checked) return;
   const checkboxes = [...document.querySelectorAll('#eventOwnerChecks input[type="checkbox"]')];
@@ -1030,6 +1093,7 @@ document.getElementById("backupImportInput").addEventListener("change", async ev
       scheduleType: task.scheduleType || (task.weekdays?.length === 7 ? "daily" : "weekly"),
       weekdays: task.weekdays || []
     }));
+    importedState.dailyNotes = importedState.dailyNotes || {};
     state = importedState;
     saveState("バックアップを読み込みました");
     syncCloudState();

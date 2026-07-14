@@ -51,6 +51,16 @@ create table if not exists public.task_completions (
   primary key (task_id, member_key, completed_on)
 );
 
+create table if not exists public.daily_notes (
+  family_id uuid not null references public.families(id) on delete cascade,
+  note_date date not null,
+  member_key text not null,
+  category text not null check (category in ('study', 'help')),
+  body text not null default '',
+  updated_at timestamptz not null default now(),
+  primary key (family_id, note_date, member_key, category)
+);
+
 create table if not exists public.calendar_events (
   id uuid primary key,
   family_id uuid not null references public.families(id) on delete cascade,
@@ -88,6 +98,7 @@ alter table public.family_users enable row level security;
 alter table public.family_members enable row level security;
 alter table public.tasks enable row level security;
 alter table public.task_completions enable row level security;
+alter table public.daily_notes enable row level security;
 alter table public.calendar_events enable row level security;
 alter table public.family_admin_settings enable row level security;
 
@@ -106,9 +117,11 @@ for all using (public.can_access_family(family_id)) with check (public.can_acces
 create policy "family members manage completions" on public.task_completions
 for all using (public.can_access_family(family_id)) with check (public.can_access_family(family_id));
 
+create policy "family members manage daily notes" on public.daily_notes
+for all using (public.can_access_family(family_id)) with check (public.can_access_family(family_id));
+
 create policy "family members manage events" on public.calendar_events
 for all using (public.can_access_family(family_id)) with check (public.can_access_family(family_id));
 
 create policy "family members manage admin settings" on public.family_admin_settings
 for all using (public.can_access_family(family_id)) with check (public.can_access_family(family_id));
-

@@ -93,6 +93,10 @@
               <span class="section-count" id="studyCount"></span>
             </div>
             <div class="task-list" id="studyTaskList"></div>
+            <label class="daily-note">
+              <span>メモ</span>
+              <textarea id="studyDailyNote" rows="3" maxlength="500" placeholder="できたこと・気づいたことなど"></textarea>
+            </label>
           </section>
 
           <section class="task-section" id="helpSection">
@@ -106,6 +110,10 @@
               <span class="section-count" id="helpCount"></span>
             </div>
             <div class="task-list" id="helpTaskList"></div>
+            <label class="daily-note">
+              <span>メモ</span>
+              <textarea id="helpDailyNote" rows="3" maxlength="500" placeholder="お手伝いのメモなど"></textarea>
+            </label>
           </section>
         </section>
 
@@ -255,6 +263,6 @@
     <div class="toast" id="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
-    <script src="app.js?v=20260712-names"></script>
+    <script src="app.js?v=20260715-daily-notes"></script>
   </body>
 </html>
