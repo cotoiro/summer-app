@@ -11,7 +11,7 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260715-monthly-help" />
   </head>
   <body>
     <section class="auth-screen" id="authScreen" aria-live="polite">
@@ -82,23 +82,6 @@
             <div id="todayEvents" class="event-list"></div>
           </section>
 
-          <section class="task-section" id="studySection">
-            <div class="section-heading task-heading">
-              <div>
-                <span class="section-icon study-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M4 5.5c2.8-.8 5.5-.2 8 1.5v13c-2.5-1.7-5.2-2.3-8-1.5zM20 5.5c-2.8-.8-5.5-.2-8 1.5v13c2.5-1.7 5.2-2.3 8-1.5z"/></svg>
-                </span>
-                <h3>宿題・勉強</h3>
-              </div>
-              <span class="section-count" id="studyCount"></span>
-            </div>
-            <div class="task-list" id="studyTaskList"></div>
-            <label class="daily-note">
-              <span>メモ</span>
-              <textarea id="studyDailyNote" rows="3" maxlength="500" placeholder="できたこと・気づいたことなど"></textarea>
-            </label>
-          </section>
-
           <section class="task-section" id="helpSection">
             <div class="section-heading task-heading">
               <div>
@@ -115,6 +98,23 @@
               <textarea id="helpDailyNote" rows="3" maxlength="500" placeholder="お手伝いのメモなど"></textarea>
             </label>
           </section>
+
+          <section class="task-section" id="studySection">
+            <div class="section-heading task-heading">
+              <div>
+                <span class="section-icon study-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 5.5c2.8-.8 5.5-.2 8 1.5v13c-2.5-1.7-5.2-2.3-8-1.5zM20 5.5c-2.8-.8-5.5-.2-8 1.5v13c2.5-1.7 5.2-2.3 8-1.5z"/></svg>
+                </span>
+                <h3>宿題・勉強</h3>
+              </div>
+              <span class="section-count" id="studyCount"></span>
+            </div>
+            <div class="task-list" id="studyTaskList"></div>
+            <label class="daily-note">
+              <span>メモ</span>
+              <textarea id="studyDailyNote" rows="3" maxlength="500" placeholder="できたこと・気づいたことなど"></textarea>
+            </label>
+          </section>
         </section>
 
         <section class="view" id="calendarView" data-view="calendar">
@@ -124,9 +124,7 @@
               <h2>カレンダー</h2>
             </div>
             <div class="calendar-actions">
-              <input id="icsImportInput" type="file" accept=".ics,text/calendar" hidden />
-              <button class="secondary-button compact-button" id="icsImportButton" type="button">ICSを読み込む</button>
-              <button class="secondary-button compact-button" id="icsExportButton" type="button">ICSを書き出す</button>
+              <button class="secondary-button compact-button" id="openMonthlyHelpButton" type="button">お手伝いの記録</button>
               <button class="primary-button" type="button" data-open-event>＋ 予定を追加</button>
             </div>
           </div>
@@ -160,6 +158,46 @@
             </div>
             <div class="calendar-help-lists" id="calendarHelpLists"></div>
           </section>
+          <section class="calendar-data-tools">
+            <div>
+              <h3>カレンダーデータ</h3>
+              <p>ほかのカレンダーと予定を受け渡すときに使います。</p>
+            </div>
+            <div class="calendar-data-actions">
+              <input id="icsImportInput" type="file" accept=".ics,text/calendar" hidden />
+              <button class="secondary-button compact-button" id="icsImportButton" type="button">ICSを読み込む</button>
+              <button class="secondary-button compact-button" id="icsExportButton" type="button">ICSを書き出す</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="monthlyHelpView" data-view="monthly-help">
+          <div class="page-heading monthly-help-heading">
+            <div>
+              <p class="eyebrow">お手伝いの振り返り</p>
+              <h2>1か月の記録</h2>
+            </div>
+            <button class="secondary-button compact-button" id="backToCalendarButton" type="button">← カレンダーへ</button>
+          </div>
+
+          <div class="monthly-toolbar">
+            <button class="date-move" id="previousRecordMonthButton" type="button" aria-label="前の月">‹</button>
+            <h3 id="monthlyHelpTitle"></h3>
+            <button class="date-move" id="nextRecordMonthButton" type="button" aria-label="次の月">›</button>
+          </div>
+          <div class="person-switch" id="monthlyPersonSwitch" aria-label="見る人を選ぶ"></div>
+
+          <section class="monthly-summary-card">
+            <p>今月のできた！</p>
+            <strong id="monthlyHelpTotal">0 / 0こ</strong>
+            <span id="monthlyHelpPercent">0%</span>
+          </section>
+
+          <div class="record-view-switch" id="recordViewSwitch" aria-label="表示方法を選ぶ">
+            <button type="button" data-record-mode="table">チェック表</button>
+            <button type="button" data-record-mode="daily">日付ごと</button>
+          </div>
+          <div id="monthlyHelpContent"></div>
         </section>
 
         <section class="view" id="manageView" data-view="manage">
@@ -171,10 +209,12 @@
             <button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button>
           </div>
           <div class="notice-card">ここで登録した「やること」が、設定した日に毎日の画面へ表示されます。</div>
+          <div class="manage-filters" id="manageFilters"></div>
+          <div class="manage-list" id="manageTaskList"></div>
           <section class="backup-card">
             <div>
               <h3>データのバックアップ</h3>
-              <p>オンライン化前の予定・やること・チェック記録をファイルに保存できます。</p>
+              <p>予定・やること・チェック記録をファイルに保存できます。</p>
             </div>
             <div class="backup-actions">
               <input id="backupImportInput" type="file" accept=".json,application/json" hidden />
@@ -182,8 +222,6 @@
               <button class="primary-button compact-button" id="backupExportButton" type="button">バックアップを保存</button>
             </div>
           </section>
-          <div class="manage-filters" id="manageFilters"></div>
-          <div class="manage-list" id="manageTaskList"></div>
         </section>
       </main>
 
@@ -279,6 +317,6 @@
     <div class="toast" id="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
-    <script src="app.js?v=20260715-task-moves"></script>
+    <script src="app.js?v=20260715-monthly-help"></script>
   </body>
 </html>

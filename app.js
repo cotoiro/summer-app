@@ -39,6 +39,8 @@ function createInitialState() {
     selectedPerson: "child1",
     selectedDate: todayKey,
     calendarDate: todayKey,
+    monthlyHelpDate: todayKey,
+    monthlyHelpMode: "table",
     manageFilter: "all",
     tasks: [
       { id: crypto.randomUUID(), title: "算数ドリル 2ページ", category: "study", assignee: "child1", scheduleType: "weekly", weekdays: [1, 2, 3, 4, 5], active: true },
@@ -74,6 +76,8 @@ function loadState() {
         dateMoves: task.dateMoves || []
       }));
       saved.dailyNotes = saved.dailyNotes || {};
+      saved.monthlyHelpDate = saved.monthlyHelpDate || saved.calendarDate || toDateKey(new Date());
+      saved.monthlyHelpMode = saved.monthlyHelpMode || "table";
       return saved;
     }
     return createInitialState();
@@ -658,8 +662,62 @@ function renderAll() {
   renderPersonSwitch();
   renderToday();
   renderCalendar();
+  renderMonthlyHelp();
   renderManage();
   fillOwnerControls();
+}
+
+function monthDateKeys(anchorKey) {
+  const anchor = parseDateKey(anchorKey);
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const days = new Date(year, month + 1, 0).getDate();
+  return Array.from({ length: days }, (_, index) => toDateKey(new Date(year, month, index + 1)));
+}
+
+function renderMonthlyHelp() {
+  const anchor = parseDateKey(state.monthlyHelpDate || state.calendarDate);
+  const dates = monthDateKeys(toDateKey(anchor));
+  const person = personById(state.selectedPerson);
+  const helpTasks = state.tasks.filter(task => task.active && task.category === "help" && appliesToPerson(task, state.selectedPerson) && dates.some(date => taskMatchesDate(task, date, state.selectedPerson)));
+  const scheduled = dates.flatMap(date => tasksFor(date, state.selectedPerson).filter(task => task.category === "help").map(task => ({ date, task })));
+  const completed = scheduled.filter(item => isTaskDone(item.task.id, item.date, state.selectedPerson)).length;
+  const percent = scheduled.length ? Math.round(completed / scheduled.length * 100) : 0;
+
+  document.getElementById("monthlyHelpTitle").textContent = `${anchor.getFullYear()}年 ${anchor.getMonth() + 1}月`;
+  document.getElementById("monthlyHelpTotal").textContent = `${completed} / ${scheduled.length}こ`;
+  document.getElementById("monthlyHelpPercent").textContent = `${percent}%`;
+  document.getElementById("monthlyPersonSwitch").innerHTML = state.people.map(item => `<button class="person-chip ${item.id === state.selectedPerson ? "active" : ""}" style="--person-color:${item.color}" data-monthly-person="${item.id}" type="button">${item.name}</button>`).join("");
+  document.querySelectorAll("[data-record-mode]").forEach(button => button.classList.toggle("active", button.dataset.recordMode === state.monthlyHelpMode));
+
+  const content = document.getElementById("monthlyHelpContent");
+  if (!scheduled.length) {
+    content.innerHTML = `<p class="empty-state">${person?.name || "この人"}のお手伝いは、この月にはありません</p>`;
+    return;
+  }
+  content.innerHTML = state.monthlyHelpMode === "daily" ? monthlyDailyHtml(dates) : monthlyTableHtml(dates, helpTasks);
+}
+
+function monthlyTableHtml(dates, helpTasks) {
+  const header = dates.map(date => { const parsed = parseDateKey(date); return `<th><span>${parsed.getDate()}</span><small>${DAY_LABELS[parsed.getDay()]}</small></th>`; }).join("");
+  const rows = helpTasks.map(task => `<tr><th class="record-task-name">${escapeHtml(task.title)}</th>${dates.map(date => {
+    if (!taskMatchesDate(task, date, state.selectedPerson)) return '<td class="not-scheduled">－</td>';
+    return `<td class="${isTaskDone(task.id, date, state.selectedPerson) ? "record-done" : "record-undone"}">${isTaskDone(task.id, date, state.selectedPerson) ? "✓" : "○"}</td>`;
+  }).join("")}</tr>`).join("");
+  return `<section class="panel monthly-table-panel"><div class="record-legend"><span><i class="done-dot"></i>できた</span><span>○ 未チェック</span><span>－ 対象外</span></div><div class="monthly-table-scroll"><table class="monthly-record-table"><thead><tr><th>お手伝い</th>${header}</tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+
+function monthlyDailyHtml(dates) {
+  const todayKey = toDateKey(new Date());
+  const cards = dates.map(date => {
+    const tasks = tasksFor(date, state.selectedPerson).filter(task => task.category === "help");
+    if (!tasks.length) return "";
+    const completed = tasks.filter(task => isTaskDone(task.id, date, state.selectedPerson)).length;
+    const rows = tasks.map(task => `<li class="${isTaskDone(task.id, date, state.selectedPerson) ? "done" : ""}"><span>${isTaskDone(task.id, date, state.selectedPerson) ? "✓" : "○"}</span>${escapeHtml(task.title)}</li>`).join("");
+    const open = date === todayKey || (date < todayKey && completed < tasks.length);
+    return `<details class="daily-record-card" ${open ? "open" : ""}><summary><span>${formatLongDate(date)}</span><strong>${completed} / ${tasks.length}${completed === tasks.length ? " ✓" : ""}</strong></summary><ul>${rows}</ul></details>`;
+  }).join("");
+  return `<div class="daily-record-list">${cards}</div>`;
 }
 
 function renderPersonSwitch() {
@@ -824,6 +882,15 @@ function moveCalendarMonth(offset) {
   renderCalendar();
 }
 
+function moveRecordMonth(offset) {
+  const date = parseDateKey(state.monthlyHelpDate);
+  date.setDate(1);
+  date.setMonth(date.getMonth() + offset);
+  state.monthlyHelpDate = toDateKey(date);
+  saveState();
+  renderMonthlyHelp();
+}
+
 function openEventDialog(eventId, mode = "edit") {
   document.getElementById("eventForm").reset();
   const savedEvent = eventId ? state.events.find(item => item.id === eventId) : null;
@@ -894,6 +961,8 @@ document.addEventListener("click", event => {
   const target = event.target.closest("button");
   if (!target) return;
   if (target.dataset.nav) switchView(target.dataset.nav);
+  if (target.dataset.monthlyPerson) { state.selectedPerson = target.dataset.monthlyPerson; saveState(); renderAll(); }
+  if (target.dataset.recordMode) { state.monthlyHelpMode = target.dataset.recordMode; saveState(); renderMonthlyHelp(); }
   if (target.dataset.person) { state.selectedPerson = target.dataset.person; saveState(); renderAll(); }
   if (target.dataset.toggleTask) {
     const taskId = target.dataset.toggleTask;
@@ -960,6 +1029,15 @@ document.getElementById("calendarTodayButton").addEventListener("click", () => {
   saveState("今日に戻りました");
   renderAll();
 });
+document.getElementById("openMonthlyHelpButton").addEventListener("click", () => {
+  state.monthlyHelpDate = state.calendarDate;
+  saveState();
+  renderMonthlyHelp();
+  switchView("monthly-help");
+});
+document.getElementById("backToCalendarButton").addEventListener("click", () => switchView("calendar"));
+document.getElementById("previousRecordMonthButton").addEventListener("click", () => moveRecordMonth(-1));
+document.getElementById("nextRecordMonthButton").addEventListener("click", () => moveRecordMonth(1));
 document.getElementById("icsExportButton").addEventListener("click", () => {
   if (!state.events.length) { showToast("書き出す予定がありません"); return; }
   const blob = new Blob([buildIcsCalendar(state.events)], { type: "text/calendar;charset=utf-8" });
