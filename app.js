@@ -351,6 +351,24 @@ function showAuthMessage(message) {
   document.getElementById("authMessage").textContent = message;
 }
 
+function canPersistAuthSession() {
+  const testKey = "summer-board-auth-storage-test";
+  try {
+    localStorage.setItem(testKey, "ok");
+    localStorage.removeItem(testKey);
+    return true;
+  } catch (error) {
+    console.error("認証情報の保存領域を利用できません。", error);
+    return false;
+  }
+}
+
+async function verifyPersistedSession(expectedUserId) {
+  const { data, error } = await cloud.client.auth.getSession();
+  if (error) throw error;
+  return data.session?.user?.id === expectedUserId;
+}
+
 async function startFamilySession(user) {
   cloud.user = user;
   showAuthMessage("家族のデータを準備しています…");
@@ -387,8 +405,23 @@ async function initializeOnlineApp() {
     showAuthMessage("接続の設定が見つかりませんでした。");
     return;
   }
-  cloud.client = window.supabase.createClient(config.url, config.publishableKey);
-  const { data: { session } } = await cloud.client.auth.getSession();
+  if (!canPersistAuthSession()) {
+    showAuthMessage("この端末ではログイン状態を保存できません。プライベートブラウズやSafariの設定を確認してください。");
+    return;
+  }
+  cloud.client = window.supabase.createClient(config.url, config.publishableKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: window.localStorage
+    }
+  });
+  const { data: { session }, error: sessionError } = await cloud.client.auth.getSession();
+  if (sessionError) {
+    console.error("ログイン状態を復元できませんでした。", sessionError);
+    showAuthMessage("保存したログイン状態を読み込めませんでした。もう一度ログインしてください。");
+  }
   if (session?.user) {
     try {
       await startFamilySession(session.user);
@@ -396,7 +429,7 @@ async function initializeOnlineApp() {
       console.error(error);
       showAuthMessage("準備中に問題がありました。もう一度ログインしてください。");
     }
-  } else {
+  } else if (!sessionError) {
     showAuthMessage("初めてなら「家族用ログインを作る」を押してください。");
   }
   cloud.client.auth.onAuthStateChange(async (_event, session) => {
@@ -1258,8 +1291,20 @@ document.getElementById("authForm").addEventListener("submit", async event => {
   const email = document.getElementById("authEmail").value.trim();
   const password = document.getElementById("authPassword").value;
   showAuthMessage("ログインしています…");
-  const { error } = await cloud.client.auth.signInWithPassword({ email, password });
-  if (error) showAuthMessage("ログインできませんでした。メールアドレスとパスワードを確認してください。");
+  const { data, error } = await cloud.client.auth.signInWithPassword({ email, password });
+  if (error) {
+    showAuthMessage("ログインできませんでした。メールアドレスとパスワードを確認してください。");
+    return;
+  }
+  try {
+    const persisted = await verifyPersistedSession(data.session?.user?.id);
+    if (!persisted) {
+      showAuthMessage("ログインできましたが、この端末にログイン状態を保存できませんでした。Safariの設定を確認してください。");
+    }
+  } catch (sessionError) {
+    console.error("ログイン状態を保存できませんでした。", sessionError);
+    showAuthMessage("ログインできましたが、ログイン状態の保存確認に失敗しました。");
+  }
 });
 
 document.getElementById("signUpButton").addEventListener("click", async () => {
