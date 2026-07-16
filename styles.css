@@ -46,6 +46,7 @@ body { margin: 0; color: var(--ink); background: #f7f2eb; }
 .current-profile { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 6px 10px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
 .current-profile > span { width: 10px; height: 10px; background: var(--person-color); border-radius: 50%; }
 .current-profile strong { font-size: 12px; }
+.current-profile strong::before { content: "現在："; }
 .current-profile small { color: var(--muted); font-size: 9px; }
 .approval-panel { margin-bottom: 18px; }
 .approval-panel.is-empty .section-heading { margin-bottom: 0; }
@@ -170,9 +171,11 @@ h3 { margin-bottom: 0; }
 .task-move-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; color: var(--orange-dark); background: var(--cream); border: 1px solid #f2c98e; border-radius: 11px; cursor: pointer; }
 .task-move-button span { font-size: 19px; line-height: 1; }
 .calendar-help-empty { margin: 0; color: var(--muted); font-size: 12px; }
-.calendar-data-tools { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 30px; padding: 16px 18px; background: #faf7f2; border: 1px solid var(--line); border-radius: 16px; }
-.calendar-data-tools h3 { margin-bottom: 4px; color: var(--muted); font-size: 13px; }
-.calendar-data-tools p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.record-tools, .calendar-data-tools { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 30px; padding: 16px 18px; background: #faf7f2; border: 1px solid var(--line); border-radius: 16px; }
+.record-tools h3, .calendar-data-tools h3 { margin-bottom: 4px; color: var(--muted); font-size: 13px; }
+.record-tools p, .calendar-data-tools p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.record-tools-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 0 0 auto; gap: 8px; }
+.record-tools-actions:has(:only-child) { grid-template-columns: minmax(180px, 1fr); }
 .calendar-data-actions { display: flex; flex: 0 0 auto; gap: 8px; }
 .monthly-toolbar { display: flex; align-items: center; justify-content: center; gap: 18px; }
 .monthly-toolbar h3 { min-width: 150px; text-align: center; }
@@ -214,7 +217,8 @@ h3 { margin-bottom: 0; }
 .manage-list + .backup-card { margin-top: 30px; }
 .backup-card h3 { margin-bottom: 4px; font-size: 14px; }
 .backup-card p { margin-bottom: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.backup-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.backup-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.manage-signout-button { color: #9a5b5b; }
 .manage-filters { display: flex; gap: 8px; margin-bottom: 16px; overflow-x: auto; }
 .filter-chip { flex: 0 0 auto; padding: 8px 14px; color: var(--muted); background: white; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; font-weight: 800; cursor: pointer; }
 .filter-chip.active { color: #714517; background: #fff0d7; border-color: #f2bc72; }
@@ -278,16 +282,19 @@ legend { margin-bottom: 9px; color: #5f554d; font-size: 12px; font-weight: 800; 
   .profile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
   .profile-choice { min-height: 105px; }
   .current-profile small { display: none; }
-  .app-header { align-items: stretch; flex-direction: column; gap: 10px; min-height: 70px; padding: 12px 16px; }
-  .brand { min-width: 0; }
+  .app-header { align-items: center; flex-direction: row; gap: 10px; min-height: 66px; padding: 10px 14px; }
+  .brand { flex: 1; min-width: 0; gap: 9px; }
   .brand > div { min-width: 0; }
-  .brand h1 { font-size: 17px; white-space: nowrap; }
-  .brand-mark { width: 42px; height: 42px; font-size: 22px; border-radius: 14px; }
+  .brand .eyebrow { display: none; }
+  .brand h1 { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+  .brand-mark { flex: 0 0 38px; width: 38px; height: 38px; font-size: 20px; border-radius: 13px; }
   h1 { font-size: 18px; }
   .save-status { display: none; }
-  .header-actions { justify-content: space-between; gap: 8px; padding-left: 54px; }
-  .current-profile { flex: 1; justify-content: center; min-width: 0; }
-  .account-button { min-height: 40px; padding: 7px 12px; font-size: 11px; }
+  .header-actions { flex: 0 1 auto; min-width: 0; gap: 0; padding-left: 0; }
+  .current-profile { justify-content: center; min-width: 76px; max-width: 112px; padding: 6px 9px; }
+  .current-profile strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .current-profile strong::before { content: ""; }
+  .account-button { display: none; }
   .main-content { padding: 22px 15px calc(154px + env(safe-area-inset-bottom)); }
   h2 { font-size: 24px; }
   .person-switch { justify-content: flex-start; margin: 20px 0; overflow-x: auto; }
@@ -304,12 +311,11 @@ legend { margin-bottom: 9px; color: #5f554d; font-size: 12px; font-weight: 800; 
   .section-icon { width: 40px; height: 40px; border-radius: 13px; }
   .task-card { min-height: 64px; padding: 10px 12px; }
   .page-heading { align-items: center; }
-  .manage-page-heading { align-items: stretch; flex-direction: column; gap: 16px; }
+  .manage-page-heading { align-items: center; flex-direction: row; gap: 12px; }
   .manage-page-heading h2 { white-space: nowrap; }
-  .manage-heading-actions { align-items: stretch; flex-direction: column; width: 100%; }
-  .manage-heading-actions .primary-button { order: -1; width: 100%; min-height: 48px; }
-  .manage-heading-actions .secondary-button { width: 100%; }
-  .calendar-page-heading { align-items: flex-start; flex-direction: column; }
+  .manage-page-heading .primary-button { min-height: 44px; margin-left: auto; white-space: nowrap; }
+  .calendar-page-heading { align-items: center; flex-direction: row; }
+  .calendar-page-heading .primary-button { margin-left: auto; white-space: nowrap; }
   .calendar-actions { justify-content: flex-start; width: 100%; flex-wrap: wrap; }
   .page-heading .primary-button { padding: 8px 12px; font-size: 12px; }
   .calendar-panel { padding: 10px 7px 12px; }
@@ -320,14 +326,17 @@ legend { margin-bottom: 9px; color: #5f554d; font-size: 12px; font-weight: 800; 
   .calendar-person-help { padding: 13px; }
   .calendar-help-task { background: #faf7f2; border-radius: 13px; }
   .calendar-help-task-row { gap: 9px; }
-  .calendar-data-tools { align-items: stretch; flex-direction: column; }
+  .record-tools, .calendar-data-tools { align-items: stretch; flex-direction: column; }
+  .record-tools-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .record-tools-actions:has(:only-child) { grid-template-columns: 1fr; }
+  .record-tools-actions button { width: 100%; min-height: 44px; }
   .calendar-data-actions { flex-wrap: wrap; }
   .monthly-help-heading { align-items: flex-start; }
   .monthly-summary-card { gap: 9px; padding: 13px; }
   .monthly-record-table tr > :first-child { width: 140px; max-width: 140px; }
   .manage-list { grid-template-columns: 1fr; }
   .backup-card { align-items: stretch; flex-direction: column; }
-  .backup-card p, .calendar-data-tools p, .task-meta { font-size: 12px; }
+  .backup-card p, .record-tools p, .calendar-data-tools p, .task-meta { font-size: 12px; }
   .backup-actions { display: grid; grid-template-columns: 1fr; }
   .backup-actions button { width: 100%; min-height: 44px; }
   .approval-panel.is-empty { padding: 12px 16px; border-radius: 16px; box-shadow: none; }

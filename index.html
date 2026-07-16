@@ -11,7 +11,7 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
-    <link rel="stylesheet" href="styles.css?v=20260716-mobile-ui" />
+    <link rel="stylesheet" href="styles.css?v=20260716-compact-header" />
   </head>
   <body>
     <section class="auth-screen" id="authScreen" aria-live="polite">
@@ -144,10 +144,7 @@
               <p class="eyebrow">家族みんなの</p>
               <h2>カレンダー</h2>
             </div>
-            <div class="calendar-actions">
-              <button class="secondary-button compact-button" id="openMonthlyHelpButton" type="button">お手伝いの記録</button>
-              <button class="primary-button" type="button" data-open-event>＋ 予定を追加</button>
-            </div>
+            <button class="primary-button" type="button" data-open-event>＋ 予定を追加</button>
           </div>
           <section class="panel calendar-panel">
             <div class="calendar-toolbar">
@@ -178,6 +175,15 @@
               </div>
             </div>
             <div class="calendar-help-lists" id="calendarHelpLists"></div>
+          </section>
+          <section class="record-tools">
+            <div>
+              <h3>記録を見る</h3>
+              <p>毎日の取り組みを月ごとに振り返れます。</p>
+            </div>
+            <div class="record-tools-actions">
+              <button class="secondary-button" id="openMonthlyHelpButton" type="button">お手伝いの記録</button>
+            </div>
           </section>
           <section class="calendar-data-tools">
             <div>
@@ -223,28 +229,26 @@
 
         <section class="view" id="manageView" data-view="manage">
           <div class="page-heading manage-page-heading">
-            <div>
-              <p class="eyebrow">おうちの人用</p>
-              <h2>やること管理</h2>
-            </div>
-            <div class="calendar-actions manage-heading-actions"><button class="secondary-button" id="resetPinButton" type="button">PINを再設定</button><button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button></div>
+            <h2>やること管理</h2>
+            <button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button>
           </div>
-          <div class="notice-card">ここで登録した「やること」が、設定した日に毎日の画面へ表示されます。</div>
           <section class="panel approval-panel" id="approvalPanel" hidden>
             <div class="section-heading"><div><span class="section-icon help-icon">✓</span><h3>お手伝いの確認待ち</h3></div><span class="section-count" id="approvalCount"></span></div>
             <div class="approval-list" id="approvalList"></div>
           </section>
           <div class="manage-filters" id="manageFilters"></div>
           <div class="manage-list" id="manageTaskList"></div>
-          <section class="backup-card">
+          <section class="backup-card" id="adminToolsCard">
             <div>
-              <h3>データのバックアップ</h3>
-              <p>予定・やること・チェック記録をファイルに保存できます。</p>
+              <h3>管理・バックアップ</h3>
+              <p>PINの変更や、予定・やること・チェック記録の保存ができます。</p>
             </div>
             <div class="backup-actions">
               <input id="backupImportInput" type="file" accept=".json,application/json" hidden />
+              <button class="secondary-button compact-button" id="resetPinButton" type="button">PINを再設定</button>
               <button class="secondary-button compact-button" id="backupImportButton" type="button">バックアップを読み込む</button>
               <button class="primary-button compact-button" id="backupExportButton" type="button">バックアップを保存</button>
+              <button class="secondary-button compact-button manage-signout-button" id="manageSignOutButton" type="button">この端末からログアウト</button>
             </div>
           </section>
         </section>
@@ -342,6 +346,6 @@
     <div class="toast" id="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
-    <script src="app.js?v=20260716-mobile-ui"></script>
+    <script src="app.js?v=20260716-compact-header"></script>
   </body>
 </html>

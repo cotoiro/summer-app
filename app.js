@@ -432,7 +432,7 @@ function activateProfile(profile, token) {
   const button = document.getElementById("currentProfileButton");
   button.hidden = false;
   button.style.setProperty("--person-color", profile.color);
-  document.getElementById("currentProfileName").textContent = `現在：${profile.name}`;
+  document.getElementById("currentProfileName").textContent = profile.name;
   document.getElementById("currentProfileDot").style.background = profile.color;
   renderAll();
 }
@@ -797,6 +797,8 @@ function applyProfilePermissions() {
   document.getElementById("backupImportButton").hidden = !parent;
   document.getElementById("backupExportButton").hidden = !parent;
   document.getElementById("signOutButton").hidden = !parent;
+  document.getElementById("manageSignOutButton").hidden = !parent;
+  document.getElementById("adminToolsCard").hidden = !parent;
   document.querySelector('[data-nav="manage"]').hidden = !parent && cloud.activeProfile?.permissions?.manage_study !== true;
   document.getElementById("openTaskButton").hidden = !parent && cloud.activeProfile?.permissions?.manage_study !== true;
   document.getElementById("resetPinButton").hidden = !parent;
@@ -1541,7 +1543,7 @@ document.getElementById("signUpButton").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("signOutButton").addEventListener("click", async () => {
+async function signOutCurrentDevice() {
   if (!isParent() || !cloud.client || !window.confirm("この端末からログアウトしますか？")) return;
   await cloud.client.auth.signOut();
   cloud.ready = false;
@@ -1555,7 +1557,10 @@ document.getElementById("signOutButton").addEventListener("click", async () => {
   document.getElementById("authPassword").value = "";
   document.getElementById("authScreen").hidden = false;
   showAuthMessage("ログアウトしました。");
-});
+}
+
+document.getElementById("signOutButton").addEventListener("click", signOutCurrentDevice);
+document.getElementById("manageSignOutButton").addEventListener("click", signOutCurrentDevice);
 
 window.addEventListener("focus", refreshCloudState);
 document.addEventListener("visibilitychange", () => {
