@@ -285,7 +285,13 @@ async function loadCloudState() {
   state.events = eventResult.data.map(eventFromCloud);
   state.completions = Object.fromEntries(completionResult.data.map(row => [completionKey(row.completed_on, row.member_key, row.task_id), true]));
   state.helpRequests = Object.fromEntries(requestResult.data.map(row => [requestKey(row.requested_on, row.member_key, row.task_id), row]));
-  cloud.members = profileResult.data.map(member => ({ id: member.profile_key, name: member.display_name, color: member.color, role: member.role, permissions: member.permissions || {} }));
+  cloud.members = profileResult.data.map(member => ({
+    id: member.profile_key,
+    name: CHILD_DISPLAY[member.profile_key]?.name || member.display_name,
+    color: CHILD_DISPLAY[member.profile_key]?.color || member.color,
+    role: member.role,
+    permissions: member.permissions || {}
+  }));
   cloud.pinsConfigured = profileResult.data.length > 0 && profileResult.data.every(member => Boolean(member.pin_set_at));
   const { data: noteRows, error: noteError } = await cloud.client
     .from("daily_notes").select("note_date, member_key, category, body").eq("family_id", cloud.familyId);
@@ -955,11 +961,15 @@ function renderCalendarHelp() {
     const completed = helpTasks.filter(task => isTaskDone(task.id, state.selectedDate, person.id)).length;
     const taskList = helpTasks.length ? helpTasks.map(task => {
       const done = isTaskDone(task.id, state.selectedDate, person.id);
+      const request = helpRequest(task.id, state.selectedDate, person.id);
+      const requested = request?.status === "pending";
       const move = taskMoveForDisplayedDate(task, state.selectedDate);
+      const canOperate = isParent() ? done : isOwnProfile(person.id) && !done;
+      const meta = done ? (isParent() ? "完了済み・タップで取消" : "親が確認済み") : requested ? "確認待ち・タップで申請取消" : isOwnProfile(person.id) ? "タップして完了を申請" : "未申請";
       return `<div class="calendar-help-task-row">
-        <button class="task-card calendar-help-task ${done ? "done" : ""}" type="button" ${isParent() ? `data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}"` : "disabled"}>
-          <span class="task-check">✓</span>
-          <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${move ? `${formatLongDate(move.from)}から移動` : (done ? "できた！" : "タップしてチェック")}</span></span>
+        <button class="task-card calendar-help-task ${done ? "done" : ""} ${requested ? "requested" : ""}" type="button" ${canOperate ? `data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}"` : "disabled"}>
+          <span class="task-check">${requested ? "…" : "✓"}</span>
+          <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${move ? `${formatLongDate(move.from)}から移動・${meta}` : meta}</span></span>
         </button>
         <button class="task-move-button" type="button" data-move-task="${task.id}" data-calendar-person="${person.id}" aria-label="${move ? "移動先を変更" : "今回だけ移動"}" title="${move ? "移動先を変更" : "今回だけ移動"}" ${isParent() ? "" : "hidden"}>
           <span aria-hidden="true">→</span>
@@ -1169,6 +1179,16 @@ document.addEventListener("click", event => {
     const personId = target.dataset.calendarPerson;
     const completedOn = state.selectedDate;
     const key = completionKey(completedOn, personId, taskId);
+    if (!isParent()) {
+      if (!isOwnProfile(personId)) { showToast("自分のお手伝いだけ申請できます"); return; }
+      const existing = helpRequest(taskId, completedOn, personId);
+      if (existing?.status === "pending") delete state.helpRequests[key];
+      else state.helpRequests[key] = { task_id: taskId, member_key: personId, requested_on: completedOn, status: "pending", requested_at: new Date().toISOString() };
+      saveState(existing?.status === "pending" ? "申請を取り消しました" : "できた！を申請しました 🐾");
+      syncHelpRequest(taskId, personId, completedOn, existing?.status === "pending");
+      renderAll();
+      return;
+    }
     if (!state.completions[key]) { showToast("確認待ちは「やること」画面で承認できます"); return; }
     state.completions[key] = !state.completions[key];
     if (!state.completions[key]) delete state.completions[key];
