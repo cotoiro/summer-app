@@ -1005,12 +1005,13 @@ function renderApprovals() {
   panel.hidden = !isParent();
   if (!isParent()) return;
   const requests = Object.values(state.helpRequests || {}).filter(request => request.status === "pending");
+  panel.classList.toggle("is-empty", requests.length === 0);
   document.getElementById("approvalCount").textContent = `${requests.length}件`;
   document.getElementById("approvalList").innerHTML = requests.length ? requests.map(request => {
     const task = state.tasks.find(item => item.id === request.task_id);
     const person = personById(request.member_key);
     return `<article class="approval-item"><p>${escapeHtml(task?.title || "お手伝い")}<small>${escapeHtml(person?.name || request.member_key)}・${formatLongDate(request.requested_on)}</small></p><div class="approval-actions"><button class="secondary-button" data-reject-help="${request.task_id}" data-request-person="${request.member_key}" data-request-date="${request.requested_on}" type="button">差し戻す</button><button class="primary-button" data-approve-help="${request.task_id}" data-request-person="${request.member_key}" data-request-date="${request.requested_on}" type="button">確認して完了</button></div></article>`;
-  }).join("") : '<p class="empty-state">確認待ちはありません</p>';
+  }).join("") : "";
 }
 
 function fillOwnerControls() {

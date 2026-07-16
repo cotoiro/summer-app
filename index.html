@@ -11,7 +11,7 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
-    <link rel="stylesheet" href="styles.css?v=20260716-profiles" />
+    <link rel="stylesheet" href="styles.css?v=20260716-mobile-ui" />
   </head>
   <body>
     <section class="auth-screen" id="authScreen" aria-live="polite">
@@ -222,12 +222,12 @@
         </section>
 
         <section class="view" id="manageView" data-view="manage">
-          <div class="page-heading">
+          <div class="page-heading manage-page-heading">
             <div>
               <p class="eyebrow">おうちの人用</p>
               <h2>やること管理</h2>
             </div>
-            <div class="calendar-actions"><button class="secondary-button" id="resetPinButton" type="button">PINを再設定</button><button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button></div>
+            <div class="calendar-actions manage-heading-actions"><button class="secondary-button" id="resetPinButton" type="button">PINを再設定</button><button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button></div>
           </div>
           <div class="notice-card">ここで登録した「やること」が、設定した日に毎日の画面へ表示されます。</div>
           <section class="panel approval-panel" id="approvalPanel" hidden>
@@ -342,6 +342,6 @@
     <div class="toast" id="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
-    <script src="app.js?v=20260716-parent-help"></script>
+    <script src="app.js?v=20260716-mobile-ui"></script>
   </body>
 </html>
