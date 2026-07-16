@@ -4,7 +4,7 @@
 
 - 家族共通のメールアドレスとパスワードでログイン
 - ログイン後に「おかあ・りょう・しゅん」を選択
-- 管理操作はおかあ用PINで保護
+- 全プロフィールを4桁PINで保護（同じ端末で継続利用するときは再入力不要）
 - 将来は子どもごとの個別ログインへ移行できる構造にする
 
 ## データ構成
@@ -14,6 +14,8 @@
 - `family_members`: おかあ・子ども2人のプロフィール
 - `tasks`: 宿題・勉強、お手伝い
 - `task_completions`: 日付・子どもごとの完了記録
+- `help_requests`: 子どものお手伝い完了申請
+- `family_activity_log`: 申請・承認・変更の操作履歴
 - `calendar_events`: 家族の予定
 - `family_admin_settings`: おかあ用管理PINの設定
 
@@ -31,7 +33,9 @@
 1. `supabase/schema.sql` を SQL Editor で実行して、データの表を作る
 2. `supabase/online-upgrade.sql` を SQL Editor で一度だけ実行して、家族用ログインから安全にデータを作れるようにする
 3. 既にオンライン共有を始めている場合、追加機能用の `supabase/add-daily-notes.sql` を SQL Editor で一度だけ実行する
-4. アプリで家族共通のメールアドレスとパスワードを登録する
+4. `supabase/profile-permissions.sql` を SQL Editor で一度だけ実行する
+5. アプリで家族共通のメールアドレスとパスワードを登録する
+6. 初回のプロフィール画面で、家族全員の4桁PINを設定する
 
 プロジェクトURLと公開用キーはブラウザアプリへ設定できます。データベース管理用の秘密鍵はブラウザへ入れません。
 

@@ -11,7 +11,7 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
-    <link rel="stylesheet" href="styles.css?v=20260715-monthly-help" />
+    <link rel="stylesheet" href="styles.css?v=20260716-profiles" />
   </head>
   <body>
     <section class="auth-screen" id="authScreen" aria-live="polite">
@@ -29,6 +29,26 @@
         <p class="auth-message" id="authMessage">接続を確認しています…</p>
       </div>
     </section>
+    <section class="profile-screen" id="profileScreen" hidden aria-live="polite">
+      <div class="profile-card">
+        <span class="auth-mark" aria-hidden="true">🐱</span>
+        <p class="eyebrow">だれが使いますか？</p>
+        <h1 id="profileTitle">プロフィールを選ぶ</h1>
+        <p class="auth-lead" id="profileLead">自分のアイコンを選んでください。</p>
+        <div class="profile-grid" id="profileGrid"></div>
+        <form class="pin-form" id="pinUnlockForm" hidden>
+          <strong id="pinProfileName"></strong>
+          <label>4桁のPIN<input id="profilePin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required /></label>
+          <div class="dialog-actions"><button class="secondary-button" id="backToProfilesButton" type="button">もどる</button><button class="primary-button" type="submit">このプロフィールで入る</button></div>
+        </form>
+        <form class="pin-setup-form" id="pinSetupForm" hidden>
+          <p class="setup-note">最初に、家族それぞれの4桁PINを決めます。</p>
+          <div id="pinSetupFields"></div>
+          <button class="primary-button" type="submit">PINを設定してはじめる</button>
+        </form>
+        <p class="auth-message" id="profileMessage"></p>
+      </div>
+    </section>
     <div class="app-shell">
       <header class="app-header">
         <div class="brand">
@@ -39,6 +59,7 @@
           </div>
         </div>
         <div class="header-actions">
+          <button class="current-profile" id="currentProfileButton" type="button" hidden><span id="currentProfileDot"></span><strong id="currentProfileName"></strong><small>切り替え</small></button>
           <div class="save-status" id="saveStatus"><span></span> この端末に保存中</div>
           <button class="account-button" id="signOutButton" type="button" hidden>ログアウト</button>
         </div>
@@ -206,9 +227,13 @@
               <p class="eyebrow">おうちの人用</p>
               <h2>やること管理</h2>
             </div>
-            <button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button>
+            <div class="calendar-actions"><button class="secondary-button" id="resetPinButton" type="button">PINを再設定</button><button class="primary-button" id="openTaskButton" type="button">＋ やることを追加</button></div>
           </div>
           <div class="notice-card">ここで登録した「やること」が、設定した日に毎日の画面へ表示されます。</div>
+          <section class="panel approval-panel" id="approvalPanel" hidden>
+            <div class="section-heading"><div><span class="section-icon help-icon">✓</span><h3>お手伝いの確認待ち</h3></div><span class="section-count" id="approvalCount"></span></div>
+            <div class="approval-list" id="approvalList"></div>
+          </section>
           <div class="manage-filters" id="manageFilters"></div>
           <div class="manage-list" id="manageTaskList"></div>
           <section class="backup-card">
@@ -317,6 +342,6 @@
     <div class="toast" id="toast" role="status"></div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
-    <script src="app.js?v=20260715-auth-persistence"></script>
+    <script src="app.js?v=20260716-profiles"></script>
   </body>
 </html>

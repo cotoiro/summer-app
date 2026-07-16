@@ -1,4 +1,5 @@
 const STORAGE_KEY = "summer-board-prototype-v1";
+const PROFILE_STORAGE_KEY = "summer-board-active-profile-v1";
 const DAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
 const PARENT = { id: "parent", name: "おかあ", color: "#e9969f" };
 const CHILD_DISPLAY = {
@@ -11,7 +12,11 @@ const cloud = {
   familyId: null,
   ready: false,
   syncing: false,
-  refreshTimer: null
+  refreshTimer: null,
+  profileToken: null,
+  activeProfile: null,
+  members: [],
+  pinsConfigured: false
 };
 
 function toDateKey(date) {
@@ -51,6 +56,7 @@ function createInitialState() {
       { id: crypto.randomUUID(), title: "洗濯ものをたたむ", category: "help", assignee: "child2", scheduleType: "weekly", weekdays: [1, 3, 5], active: true }
     ],
     completions: {},
+    helpRequests: {},
     dailyNotes: {},
     events: [
       { id: crypto.randomUUID(), date: todayKey, title: "夏休みの予定を家族で確認", startTime: "19:00", endTime: "19:30", owner: "family" },
@@ -76,6 +82,7 @@ function loadState() {
         dateMoves: task.dateMoves || []
       }));
       saved.dailyNotes = saved.dailyNotes || {};
+      saved.helpRequests = saved.helpRequests || {};
       saved.monthlyHelpDate = saved.monthlyHelpDate || saved.calendarDate || toDateKey(new Date());
       saved.monthlyHelpMode = saved.monthlyHelpMode || "table";
       return saved;
@@ -213,62 +220,63 @@ async function runCloudWrite(writeAction) {
 }
 
 function syncTask(task) {
-  return runCloudWrite(() => cloud.client.from("tasks").upsert(taskToCloudRow(task)));
+  return runCloudWrite(() => cloud.client.rpc("save_family_task", { p_token: cloud.profileToken, p_task: taskToCloudRow(task) }));
 }
 
 function deleteCloudTask(taskId) {
-  return runCloudWrite(() => cloud.client.from("tasks").delete().eq("family_id", cloud.familyId).eq("id", taskId));
+  return runCloudWrite(() => cloud.client.rpc("delete_family_task", { p_token: cloud.profileToken, p_task_id: taskId }));
 }
 
 function syncEvent(item) {
-  return runCloudWrite(() => cloud.client.from("calendar_events").upsert(eventToCloudRow(item)));
+  return runCloudWrite(() => cloud.client.rpc("save_family_event", { p_token: cloud.profileToken, p_event: eventToCloudRow(item) }));
 }
 
 function syncEvents(items) {
   if (!items.length) return Promise.resolve();
-  return runCloudWrite(() => cloud.client.from("calendar_events").upsert(items.map(eventToCloudRow)));
+  return Promise.all(items.map(syncEvent));
 }
 
 function deleteCloudEvent(eventId) {
-  return runCloudWrite(() => cloud.client.from("calendar_events").delete().eq("family_id", cloud.familyId).eq("id", eventId));
+  return runCloudWrite(() => cloud.client.rpc("delete_family_event", { p_token: cloud.profileToken, p_event_id: eventId }));
 }
 
 function syncCompletion(taskId, memberKey, completedOn, completed) {
-  if (completed) {
-    return runCloudWrite(() => cloud.client.from("task_completions").upsert({
-      family_id: cloud.familyId,
-      task_id: taskId,
-      member_key: memberKey,
-      completed_on: completedOn
-    }));
-  }
-  return runCloudWrite(() => cloud.client.from("task_completions").delete()
-    .eq("family_id", cloud.familyId).eq("task_id", taskId).eq("member_key", memberKey).eq("completed_on", completedOn));
+  return runCloudWrite(() => cloud.client.rpc("set_family_task_completion", {
+    p_token: cloud.profileToken, p_task_id: taskId, p_member_key: memberKey,
+    p_completed_on: completedOn, p_completed: completed
+  }));
+}
+
+function syncHelpRequest(taskId, memberKey, requestedOn, cancel = false) {
+  return runCloudWrite(() => cloud.client.rpc("set_family_help_request", {
+    p_token: cloud.profileToken, p_task_id: taskId, p_member_key: memberKey,
+    p_requested_on: requestedOn, p_cancel: cancel
+  }));
+}
+
+function decideHelpRequest(taskId, memberKey, requestedOn, approve) {
+  return runCloudWrite(() => cloud.client.rpc("decide_family_help_request", {
+    p_token: cloud.profileToken, p_task_id: taskId, p_member_key: memberKey,
+    p_requested_on: requestedOn, p_approve: approve
+  }));
 }
 
 function syncDailyNote(dateKey, memberKey, category, body) {
-  const trimmed = body.trim();
-  if (!trimmed) {
-    return runCloudWrite(() => cloud.client.from("daily_notes").delete()
-      .eq("family_id", cloud.familyId).eq("note_date", dateKey).eq("member_key", memberKey).eq("category", category));
-  }
-  return runCloudWrite(() => cloud.client.from("daily_notes").upsert({
-    family_id: cloud.familyId,
-    note_date: dateKey,
-    member_key: memberKey,
-    category,
-    body: trimmed
+  return runCloudWrite(() => cloud.client.rpc("save_family_daily_note", {
+    p_token: cloud.profileToken, p_note_date: dateKey, p_member_key: memberKey,
+    p_category: category, p_body: body.trim()
   }));
 }
 
 async function loadCloudState() {
-  const [profileResult, taskResult, eventResult, completionResult] = await Promise.all([
-    cloud.client.from("family_members").select("profile_key, display_name, color, role, sort_order").eq("family_id", cloud.familyId).order("sort_order"),
+  const [profileResult, taskResult, eventResult, completionResult, requestResult] = await Promise.all([
+    cloud.client.from("family_members").select("profile_key, display_name, color, role, sort_order, permissions, pin_set_at").eq("family_id", cloud.familyId).order("sort_order"),
     cloud.client.from("tasks").select("*").eq("family_id", cloud.familyId),
     cloud.client.from("calendar_events").select("*").eq("family_id", cloud.familyId),
-    cloud.client.from("task_completions").select("task_id, member_key, completed_on").eq("family_id", cloud.familyId)
+    cloud.client.from("task_completions").select("task_id, member_key, completed_on").eq("family_id", cloud.familyId),
+    cloud.client.from("help_requests").select("task_id, member_key, requested_on, status, requested_at").eq("family_id", cloud.familyId)
   ]);
-  const error = [profileResult, taskResult, eventResult, completionResult].find(result => result.error)?.error;
+  const error = [profileResult, taskResult, eventResult, completionResult, requestResult].find(result => result.error)?.error;
   if (error) throw error;
 
   const children = normalizePeople(profileResult.data.filter(member => member.role === "child").map(member => ({ id: member.profile_key, name: member.display_name, color: member.color })));
@@ -276,6 +284,9 @@ async function loadCloudState() {
   state.tasks = taskResult.data.map(taskFromCloud);
   state.events = eventResult.data.map(eventFromCloud);
   state.completions = Object.fromEntries(completionResult.data.map(row => [completionKey(row.completed_on, row.member_key, row.task_id), true]));
+  state.helpRequests = Object.fromEntries(requestResult.data.map(row => [requestKey(row.requested_on, row.member_key, row.task_id), row]));
+  cloud.members = profileResult.data.map(member => ({ id: member.profile_key, name: member.display_name, color: member.color, role: member.role, permissions: member.permissions || {} }));
+  cloud.pinsConfigured = profileResult.data.length > 0 && profileResult.data.every(member => Boolean(member.pin_set_at));
   const { data: noteRows, error: noteError } = await cloud.client
     .from("daily_notes").select("note_date, member_key, category, body").eq("family_id", cloud.familyId);
   if (!noteError) state.dailyNotes = Object.fromEntries(noteRows.map(dailyNoteFromCloud));
@@ -369,6 +380,69 @@ async function verifyPersistedSession(expectedUserId) {
   return data.session?.user?.id === expectedUserId;
 }
 
+function isParent() {
+  return cloud.activeProfile?.role === "parent";
+}
+
+function isOwnProfile(personId) {
+  return isParent() || cloud.activeProfile?.id === personId;
+}
+
+function canManageTask(task) {
+  if (isParent()) return true;
+  return cloud.activeProfile?.permissions?.manage_study === true && task?.category === "study" && task.assignee === cloud.activeProfile.id;
+}
+
+function profileStorage() {
+  try { return JSON.parse(localStorage.getItem(PROFILE_STORAGE_KEY)) || null; } catch { return null; }
+}
+
+function showProfileScreen() {
+  document.getElementById("profileScreen").hidden = false;
+  document.getElementById("pinUnlockForm").hidden = true;
+  document.getElementById("profileGrid").hidden = false;
+  document.getElementById("profileTitle").textContent = "プロフィールを選ぶ";
+  document.getElementById("profileLead").textContent = "自分のアイコンを選んでください。";
+  document.getElementById("profileGrid").innerHTML = cloud.members.map(member => `<button class="profile-choice" style="--person-color:${member.color}" data-unlock-profile="${member.id}" type="button"><span>${member.role === "parent" ? "🐱" : "🐾"}</span><strong>${escapeHtml(member.name)}</strong></button>`).join("");
+}
+
+function showPinSetup() {
+  document.getElementById("profileScreen").hidden = false;
+  document.getElementById("profileGrid").hidden = true;
+  document.getElementById("pinUnlockForm").hidden = true;
+  document.getElementById("pinSetupForm").hidden = false;
+  document.getElementById("profileTitle").textContent = "家族のPINを設定";
+  document.getElementById("profileLead").textContent = "PINを忘れたときは親プロフィールから再設定できます。";
+  document.getElementById("pinSetupFields").innerHTML = cloud.members.map(member => `<label>${escapeHtml(member.name)}（${member.role === "parent" ? "親" : "子ども"}）<input name="${member.id}" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required /></label>`).join("");
+}
+
+function activateProfile(profile, token) {
+  cloud.activeProfile = profile;
+  cloud.profileToken = token;
+  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify({ token, profileId: profile.id }));
+  if (profile.role === "child") state.selectedPerson = profile.id;
+  document.getElementById("profileScreen").hidden = true;
+  document.getElementById("pinSetupForm").hidden = true;
+  const button = document.getElementById("currentProfileButton");
+  button.hidden = false;
+  button.style.setProperty("--person-color", profile.color);
+  document.getElementById("currentProfileName").textContent = `現在：${profile.name}`;
+  document.getElementById("currentProfileDot").style.background = profile.color;
+  renderAll();
+}
+
+async function restoreOrChooseProfile() {
+  if (!cloud.pinsConfigured) { showPinSetup(); return; }
+  const saved = profileStorage();
+  if (saved?.token) {
+    const { data } = await cloud.client.rpc("resume_family_profile", { p_token: saved.token });
+    const profile = cloud.members.find(member => member.id === data?.profile_key);
+    if (profile) { activateProfile(profile, saved.token); return; }
+  }
+  localStorage.removeItem(PROFILE_STORAGE_KEY);
+  showProfileScreen();
+}
+
 async function startFamilySession(user) {
   cloud.user = user;
   showAuthMessage("家族のデータを準備しています…");
@@ -394,7 +468,7 @@ async function startFamilySession(user) {
   document.getElementById("authScreen").hidden = true;
   document.getElementById("signOutButton").hidden = false;
   setSaveStatus("家族と同期済み");
-  renderAll();
+  await restoreOrChooseProfile();
   clearInterval(cloud.refreshTimer);
   cloud.refreshTimer = window.setInterval(refreshCloudState, 12000);
 }
@@ -683,6 +757,14 @@ function completionKey(dateKey, personId, taskId) {
   return `${dateKey}:${personId}:${taskId}`;
 }
 
+function requestKey(dateKey, personId, taskId) {
+  return `${dateKey}:${personId}:${taskId}`;
+}
+
+function helpRequest(taskId, dateKey, personId) {
+  return state.helpRequests?.[requestKey(dateKey, personId, taskId)] || null;
+}
+
 function isTaskDone(taskId, dateKey, personId) {
   return Boolean(state.completions[completionKey(dateKey, personId, taskId)]);
 }
@@ -698,6 +780,23 @@ function renderAll() {
   renderMonthlyHelp();
   renderManage();
   fillOwnerControls();
+  applyProfilePermissions();
+}
+
+function applyProfilePermissions() {
+  if (!cloud.activeProfile) return;
+  const parent = isParent();
+  document.querySelectorAll("[data-open-event], [data-edit-event], [data-delete-event], [data-copy-event]").forEach(element => { element.hidden = !parent; });
+  document.getElementById("icsImportButton").hidden = !parent;
+  document.getElementById("backupImportButton").hidden = !parent;
+  document.getElementById("backupExportButton").hidden = !parent;
+  document.getElementById("signOutButton").hidden = !parent;
+  document.querySelector('[data-nav="manage"]').hidden = !parent && cloud.activeProfile?.permissions?.manage_study !== true;
+  document.getElementById("openTaskButton").hidden = !parent && cloud.activeProfile?.permissions?.manage_study !== true;
+  document.getElementById("resetPinButton").hidden = !parent;
+  document.querySelectorAll(".daily-note textarea").forEach(textarea => {
+    textarea.disabled = !isOwnProfile(state.selectedPerson);
+  });
 }
 
 function monthDateKeys(anchorKey) {
@@ -810,9 +909,13 @@ function renderTaskCategory(category, tasks) {
   count.textContent = `${completed} / ${categoryTasks.length}`;
   list.innerHTML = categoryTasks.length ? categoryTasks.map(task => {
     const done = isDone(task.id);
-    return `<button class="task-card ${done ? "done" : ""}" type="button" data-toggle-task="${task.id}">
-      <span class="task-check">✓</span>
-      <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">タップして${done ? "もとに戻す" : "できた！にする"}</span></span>
+    const request = category === "help" ? helpRequest(task.id, state.selectedDate, state.selectedPerson) : null;
+    const requested = request?.status === "pending";
+    const canOperate = isParent() || (isOwnProfile(state.selectedPerson) && (category === "help" || cloud.activeProfile?.permissions?.complete_study === true));
+    const meta = done ? (isParent() ? "タップして完了を取り消す" : "完了しました") : requested ? (isParent() ? "確認待ちです" : "確認待ち・タップで申請取消") : category === "help" ? (isParent() ? "子どもの申請を待っています" : "タップして完了を申請") : "タップしてできた！にする";
+    return `<button class="task-card ${done ? "done" : ""} ${requested ? "requested" : ""}" type="button" data-toggle-task="${task.id}" ${canOperate ? "" : "disabled"}>
+      <span class="task-check">${requested ? "…" : "✓"}</span>
+      <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${meta}</span></span>
     </button>`;
   }).join("") : '<p class="empty-state">この日のやることはありません</p>';
   const note = document.getElementById(`${category}DailyNote`);
@@ -854,11 +957,11 @@ function renderCalendarHelp() {
       const done = isTaskDone(task.id, state.selectedDate, person.id);
       const move = taskMoveForDisplayedDate(task, state.selectedDate);
       return `<div class="calendar-help-task-row">
-        <button class="task-card calendar-help-task ${done ? "done" : ""}" type="button" data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}">
+        <button class="task-card calendar-help-task ${done ? "done" : ""}" type="button" ${isParent() ? `data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}"` : "disabled"}>
           <span class="task-check">✓</span>
           <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${move ? `${formatLongDate(move.from)}から移動` : (done ? "できた！" : "タップしてチェック")}</span></span>
         </button>
-        <button class="task-move-button" type="button" data-move-task="${task.id}" data-calendar-person="${person.id}" aria-label="${move ? "移動先を変更" : "今回だけ移動"}" title="${move ? "移動先を変更" : "今回だけ移動"}">
+        <button class="task-move-button" type="button" data-move-task="${task.id}" data-calendar-person="${person.id}" aria-label="${move ? "移動先を変更" : "今回だけ移動"}" title="${move ? "移動先を変更" : "今回だけ移動"}" ${isParent() ? "" : "hidden"}>
           <span aria-hidden="true">→</span>
         </button>
       </div>`;
@@ -871,18 +974,33 @@ function renderCalendarHelp() {
 }
 
 function renderManage() {
-  const filters = [{ id: "all", name: "すべて" }, ...state.people.map(person => ({ id: person.id, name: person.name })), { id: "both", name: "ふたり" }];
+  const filters = isParent() ? [{ id: "all", name: "すべて" }, ...state.people.map(person => ({ id: person.id, name: person.name })), { id: "both", name: "ふたり" }] : [{ id: cloud.activeProfile?.id, name: "自分の勉強" }];
+  if (!isParent()) state.manageFilter = cloud.activeProfile?.id || state.manageFilter;
   document.getElementById("manageFilters").innerHTML = filters.map(filter => `<button class="filter-chip ${state.manageFilter === filter.id ? "active" : ""}" type="button" data-manage-filter="${filter.id}">${filter.name}</button>`).join("");
-  const tasks = state.tasks.filter(task => state.manageFilter === "all" || task.assignee === state.manageFilter);
+  const tasks = state.tasks.filter(task => (state.manageFilter === "all" || task.assignee === state.manageFilter) && (isParent() || canManageTask(task)));
   document.getElementById("manageTaskList").innerHTML = tasks.length ? tasks.map(task => {
     const assignee = task.assignee === "both" ? "ふたり" : personById(task.assignee)?.name;
     const schedule = taskScheduleDescription(task);
     return `<article class="manage-card ${task.active ? "" : "inactive"}">
       <div class="manage-card-top"><div><span class="category-label ${task.category === "help" ? "help" : ""}">${task.category === "study" ? "宿題・勉強" : "お手伝い"}</span><h3>${escapeHtml(task.title)}</h3></div>
-      <div class="manage-actions"><button type="button" data-edit-task="${task.id}" aria-label="編集">✎</button><button type="button" data-delete-task="${task.id}" aria-label="削除">×</button></div></div>
+      <div class="manage-actions"><button type="button" data-edit-task="${task.id}" aria-label="編集">✎</button>${isParent() ? `<button type="button" data-delete-task="${task.id}" aria-label="削除">×</button>` : ""}</div></div>
       <p>${assignee}　／　${schedule}${task.active ? "" : "　／　お休み中"}</p>
     </article>`;
   }).join("") : '<p class="empty-state">登録されたやることはありません</p>';
+  renderApprovals();
+}
+
+function renderApprovals() {
+  const panel = document.getElementById("approvalPanel");
+  panel.hidden = !isParent();
+  if (!isParent()) return;
+  const requests = Object.values(state.helpRequests || {}).filter(request => request.status === "pending");
+  document.getElementById("approvalCount").textContent = `${requests.length}件`;
+  document.getElementById("approvalList").innerHTML = requests.length ? requests.map(request => {
+    const task = state.tasks.find(item => item.id === request.task_id);
+    const person = personById(request.member_key);
+    return `<article class="approval-item"><p>${escapeHtml(task?.title || "お手伝い")}<small>${escapeHtml(person?.name || request.member_key)}・${formatLongDate(request.requested_on)}</small></p><div class="approval-actions"><button class="secondary-button" data-reject-help="${request.task_id}" data-request-person="${request.member_key}" data-request-date="${request.requested_on}" type="button">差し戻す</button><button class="primary-button" data-approve-help="${request.task_id}" data-request-person="${request.member_key}" data-request-date="${request.requested_on}" type="button">確認して完了</button></div></article>`;
+  }).join("") : '<p class="empty-state">確認待ちはありません</p>';
 }
 
 function fillOwnerControls() {
@@ -956,6 +1074,7 @@ function updateTaskScheduleFields() {
 function openTaskDialog(taskId) {
   document.getElementById("taskForm").reset();
   const task = taskId ? state.tasks.find(item => item.id === taskId) : null;
+  if (task && !canManageTask(task)) { showToast("この項目は編集できません"); return; }
   document.getElementById("taskDialogTitle").textContent = task ? "やることを編集" : "やることを追加";
   document.getElementById("taskId").value = task?.id || "";
   document.getElementById("taskTitle").value = task?.title || "";
@@ -968,6 +1087,8 @@ function openTaskDialog(taskId) {
   document.getElementById("taskBiweeklyStartDate").value = task?.biweeklyStartDate || state.selectedDate;
   document.getElementById("weekdayChecks").innerHTML = DAY_LABELS.map((label, index) => `<label><input type="checkbox" value="${index}" ${(task?.weekdays || [1,2,3,4,5]).includes(index) ? "checked" : ""}><span>${label}</span></label>`).join("");
   updateTaskScheduleFields();
+  document.getElementById("taskCategory").disabled = !isParent();
+  document.getElementById("taskAssignee").disabled = !isParent();
   document.getElementById("taskDialog").showModal();
   setTimeout(() => document.getElementById("taskTitle").focus(), 50);
 }
@@ -993,26 +1114,62 @@ function escapeHtml(value) {
 document.addEventListener("click", event => {
   const target = event.target.closest("button");
   if (!target) return;
+  if (target.dataset.unlockProfile) {
+    const profile = cloud.members.find(member => member.id === target.dataset.unlockProfile);
+    document.getElementById("profileGrid").hidden = true;
+    document.getElementById("pinUnlockForm").hidden = false;
+    document.getElementById("pinProfileName").textContent = `${profile?.name || "プロフィール"}のPIN`;
+    document.getElementById("pinUnlockForm").dataset.profileId = target.dataset.unlockProfile;
+    document.getElementById("profilePin").value = "";
+    document.getElementById("profilePin").focus();
+    return;
+  }
   if (target.dataset.nav) switchView(target.dataset.nav);
   if (target.dataset.monthlyPerson) { state.selectedPerson = target.dataset.monthlyPerson; saveState(); renderAll(); }
   if (target.dataset.recordMode) { state.monthlyHelpMode = target.dataset.recordMode; saveState(); renderMonthlyHelp(); }
   if (target.dataset.person) { state.selectedPerson = target.dataset.person; saveState(); renderAll(); }
   if (target.dataset.toggleTask) {
     const taskId = target.dataset.toggleTask;
+    const task = state.tasks.find(item => item.id === taskId);
     const personId = state.selectedPerson;
     const completedOn = state.selectedDate;
     const key = completionKey(completedOn, personId, taskId);
+    if (task?.category === "help" && !isParent()) {
+      const existing = helpRequest(taskId, completedOn, personId);
+      if (!isOwnProfile(personId)) { showToast("自分のお手伝いだけ申請できます"); return; }
+      if (isTaskDone(taskId, completedOn, personId)) { showToast("親が確認済みです"); return; }
+      if (existing?.status === "pending") delete state.helpRequests[key];
+      else state.helpRequests[key] = { task_id: taskId, member_key: personId, requested_on: completedOn, status: "pending", requested_at: new Date().toISOString() };
+      saveState(existing?.status === "pending" ? "申請を取り消しました" : "できた！を申請しました 🐾");
+      syncHelpRequest(taskId, personId, completedOn, existing?.status === "pending");
+      renderToday();
+      return;
+    }
+    if (task?.category === "help" && isParent() && !state.completions[key]) { showToast("確認待ちは「やること」画面で承認できます"); return; }
     state.completions[key] = !state.completions[key];
     if (!state.completions[key]) delete state.completions[key];
     saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
     syncCompletion(taskId, personId, completedOn, Boolean(state.completions[key]));
     renderToday();
   }
+  if (target.dataset.approveHelp || target.dataset.rejectHelp) {
+    const taskId = target.dataset.approveHelp || target.dataset.rejectHelp;
+    const personId = target.dataset.requestPerson;
+    const date = target.dataset.requestDate;
+    const approve = Boolean(target.dataset.approveHelp);
+    const key = requestKey(date, personId, taskId);
+    if (approve) state.completions[completionKey(date, personId, taskId)] = true;
+    delete state.helpRequests[key];
+    saveState(approve ? "確認して完了にしました 🎉" : "差し戻しました");
+    decideHelpRequest(taskId, personId, date, approve);
+    renderAll();
+  }
   if (target.dataset.toggleCalendarTask) {
     const taskId = target.dataset.toggleCalendarTask;
     const personId = target.dataset.calendarPerson;
     const completedOn = state.selectedDate;
     const key = completionKey(completedOn, personId, taskId);
+    if (!state.completions[key]) { showToast("確認待ちは「やること」画面で承認できます"); return; }
     state.completions[key] = !state.completions[key];
     if (!state.completions[key]) delete state.completions[key];
     saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
@@ -1020,7 +1177,7 @@ document.addEventListener("click", event => {
     renderAll();
   }
   if (target.dataset.moveTask) openTaskMoveDialog(target.dataset.moveTask, target.dataset.calendarPerson);
-  if (target.hasAttribute("data-open-event")) openEventDialog();
+  if (target.hasAttribute("data-open-event") && isParent()) openEventDialog();
   if (target.dataset.copyEvent) openEventDialog(target.dataset.copyEvent, "copy");
   if (target.dataset.editEvent) openEventDialog(target.dataset.editEvent);
   if (target.dataset.deleteEvent) {
@@ -1042,6 +1199,36 @@ document.addEventListener("click", event => {
       renderAll();
     }
   }
+});
+
+document.getElementById("currentProfileButton").addEventListener("click", () => {
+  cloud.activeProfile = null;
+  cloud.profileToken = null;
+  localStorage.removeItem(PROFILE_STORAGE_KEY);
+  showProfileScreen();
+});
+
+document.getElementById("backToProfilesButton").addEventListener("click", showProfileScreen);
+
+document.getElementById("pinUnlockForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const profileId = event.currentTarget.dataset.profileId;
+  const pin = document.getElementById("profilePin").value;
+  const { data, error } = await cloud.client.rpc("unlock_family_profile", { p_profile_key: profileId, p_pin: pin });
+  if (error || !data?.token) { document.getElementById("profileMessage").textContent = "PINが違います。もう一度確認してください。"; return; }
+  const profile = cloud.members.find(member => member.id === profileId);
+  document.getElementById("profileMessage").textContent = "";
+  activateProfile(profile, data.token);
+});
+
+document.getElementById("pinSetupForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const pins = Object.fromEntries(cloud.members.map(member => [member.id, new FormData(event.currentTarget).get(member.id)]));
+  const { data, error } = await cloud.client.rpc("setup_family_profile_pins", { p_pins: pins });
+  if (error || !data?.token) { document.getElementById("profileMessage").textContent = error?.message || "PINを設定できませんでした。"; return; }
+  await loadCloudState();
+  const parent = cloud.members.find(member => member.role === "parent");
+  activateProfile(parent, data.token);
 });
 
 document.getElementById("previousDayButton").addEventListener("click", () => moveSelectedDate(-1));
@@ -1111,6 +1298,17 @@ document.getElementById("icsImportInput").addEventListener("change", async event
   }
 });
 document.getElementById("openTaskButton").addEventListener("click", () => openTaskDialog());
+document.getElementById("resetPinButton").addEventListener("click", async () => {
+  if (!isParent()) return;
+  const choices = cloud.members.map((member, index) => `${index + 1}: ${member.name}`).join("\n");
+  const selected = window.prompt(`PINを再設定する人の番号を入力してください。\n${choices}`);
+  const member = cloud.members[Number(selected) - 1];
+  if (!member) return;
+  const pin = window.prompt(`${member.name}の新しい4桁PINを入力してください。`);
+  if (!/^\d{4}$/.test(pin || "")) { showToast("PINは4桁の数字にしてください"); return; }
+  const { error } = await cloud.client.rpc("reset_family_profile_pin", { p_token: cloud.profileToken, p_profile_key: member.id, p_new_pin: pin });
+  showToast(error ? "PINを変更できませんでした" : `${member.name}のPINを変更しました`);
+});
 document.getElementById("taskScheduleType").addEventListener("change", updateTaskScheduleFields);
 
 ["study", "help"].forEach(category => {
@@ -1323,12 +1521,15 @@ document.getElementById("signUpButton").addEventListener("click", async () => {
 });
 
 document.getElementById("signOutButton").addEventListener("click", async () => {
-  if (!cloud.client || !window.confirm("この端末からログアウトしますか？")) return;
+  if (!isParent() || !cloud.client || !window.confirm("この端末からログアウトしますか？")) return;
   await cloud.client.auth.signOut();
   cloud.ready = false;
   clearInterval(cloud.refreshTimer);
   cloud.user = null;
   cloud.familyId = null;
+  cloud.activeProfile = null;
+  cloud.profileToken = null;
+  localStorage.removeItem(PROFILE_STORAGE_KEY);
   document.getElementById("signOutButton").hidden = true;
   document.getElementById("authPassword").value = "";
   document.getElementById("authScreen").hidden = false;

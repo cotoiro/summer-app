@@ -30,6 +30,33 @@ body { margin: 0; color: var(--ink); background: #f7f2eb; }
 .auth-form input { width: 100%; min-height: 45px; padding: 9px 12px; color: var(--ink); background: white; border: 1px solid #dcd2c7; border-radius: 11px; }
 .auth-form button { width: 100%; }
 .auth-message { min-height: 20px; margin: 17px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.profile-screen { position: fixed; z-index: 190; inset: 0; display: grid; place-items: center; padding: 20px; background: linear-gradient(145deg, #fff3d9, #fceff2); }
+.profile-screen[hidden] { display: none; }
+.profile-card { width: min(100%, 510px); padding: 34px; background: var(--paper); border: 1px solid #f1d8b6; border-radius: 28px; box-shadow: var(--shadow); text-align: center; }
+.profile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 24px 0 8px; }
+.profile-choice { display: grid; place-items: center; gap: 8px; min-height: 120px; padding: 15px 8px; color: var(--ink); background: white; border: 2px solid var(--person-color); border-radius: 20px; cursor: pointer; }
+.profile-choice span { display: grid; place-items: center; width: 48px; height: 48px; background: color-mix(in srgb, var(--person-color) 20%, white); border-radius: 50%; font-size: 25px; }
+.profile-choice strong { font-size: 14px; }
+.pin-form, .pin-setup-form { margin-top: 22px; text-align: left; }
+.pin-form > strong { display: block; margin-bottom: 15px; font-size: 18px; text-align: center; }
+.pin-form label, .pin-setup-form label { display: grid; gap: 6px; margin-bottom: 13px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.pin-form input, .pin-setup-form input { min-height: 48px; padding: 10px 14px; background: white; border: 1px solid var(--line); border-radius: 12px; font-size: 20px; letter-spacing: .35em; text-align: center; }
+.setup-note { color: var(--muted); font-size: 13px; }
+.pin-setup-form > .primary-button { width: 100%; }
+.current-profile { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 6px 10px; color: var(--ink); background: white; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
+.current-profile > span { width: 10px; height: 10px; background: var(--person-color); border-radius: 50%; }
+.current-profile strong { font-size: 12px; }
+.current-profile small { color: var(--muted); font-size: 9px; }
+.approval-panel { margin-bottom: 18px; }
+.approval-list { display: grid; gap: 9px; }
+.approval-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: #faf7f2; border-radius: 13px; }
+.approval-item p { flex: 1; margin: 0; font-size: 13px; font-weight: 800; }
+.approval-item small { display: block; margin-top: 3px; color: var(--muted); }
+.approval-actions { display: flex; gap: 6px; }
+.approval-actions button { min-height: 34px; padding: 6px 10px; border-radius: 10px; font-size: 11px; font-weight: 800; cursor: pointer; }
+.task-card.requested { background: #fff4df; border-color: #f2bc72; }
+.task-card.requested .task-check { color: #8b5a18; background: #ffe5b8; border-color: #f2bc72; }
+.task-card[disabled] { cursor: default; }
 .account-button { padding: 7px 10px; color: var(--muted); background: white; border: 1px solid var(--line); border-radius: 10px; font-size: 11px; font-weight: 800; cursor: pointer; }
 button, input, select { font: inherit; }
 button { color: inherit; }
@@ -246,6 +273,10 @@ legend { margin-bottom: 9px; color: #5f554d; font-size: 12px; font-weight: 800; 
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 700px) {
+  .profile-card { padding: 26px 18px; }
+  .profile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+  .profile-choice { min-height: 105px; }
+  .current-profile small { display: none; }
   .app-header { min-height: 70px; padding: 12px 16px; }
   .brand-mark { width: 42px; height: 42px; font-size: 22px; border-radius: 14px; }
   h1 { font-size: 18px; }
