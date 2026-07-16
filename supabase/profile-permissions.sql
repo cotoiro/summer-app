@@ -104,7 +104,7 @@ begin
   for v_member in select profile_key, role from family_members where family_id = v_family loop
     v_pin := p_pins ->> v_member.profile_key;
     if v_pin is null or v_pin !~ '^[0-9]{4}$' then raise exception '% のPINは4桁の数字にしてください', v_member.profile_key; end if;
-    update family_members set pin_hash = crypt(v_pin, gen_salt('bf')), pin_set_at = now() where family_id = v_family and profile_key = v_member.profile_key;
+    update family_members set pin_hash = extensions.crypt(v_pin, extensions.gen_salt('bf')), pin_set_at = now() where family_id = v_family and profile_key = v_member.profile_key;
     if v_member.role = 'parent' then v_parent_key := v_member.profile_key; end if;
   end loop;
   insert into family_profile_sessions(family_id, profile_key, auth_user_id) values(v_family, v_parent_key, auth.uid()) returning token into v_token;
@@ -121,7 +121,7 @@ declare v_family uuid; v_member family_members%rowtype; v_token uuid;
 begin
   select family_id into v_family from family_users where user_id = auth.uid() limit 1;
   select * into v_member from family_members where family_id = v_family and profile_key = p_profile_key;
-  if v_member.id is null or v_member.pin_hash is null or crypt(p_pin, v_member.pin_hash) <> v_member.pin_hash then
+  if v_member.id is null or v_member.pin_hash is null or extensions.crypt(p_pin, v_member.pin_hash) <> v_member.pin_hash then
     raise exception 'PINが違います';
   end if;
   delete from family_profile_sessions where auth_user_id = auth.uid() and expires_at < now();
@@ -149,7 +149,7 @@ begin
   select role into v_role from family_members where family_id=v_session.family_id and profile_key=v_session.profile_key;
   if v_role <> 'parent' then raise exception '親プロフィールでの操作が必要です'; end if;
   if p_new_pin !~ '^[0-9]{4}$' then raise exception 'PINは4桁の数字にしてください'; end if;
-  update family_members set pin_hash=crypt(p_new_pin,gen_salt('bf')),pin_set_at=now() where family_id=v_session.family_id and profile_key=p_profile_key;
+  update family_members set pin_hash=extensions.crypt(p_new_pin,extensions.gen_salt('bf')),pin_set_at=now() where family_id=v_session.family_id and profile_key=p_profile_key;
   delete from family_profile_sessions where family_id=v_session.family_id and profile_key=p_profile_key and token<>p_token;
   insert into family_activity_log(family_id,profile_key,action,target_type,target_key) values(v_session.family_id,v_session.profile_key,'reset_pin','profile',p_profile_key);
 end; $$;
