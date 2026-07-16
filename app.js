@@ -918,7 +918,7 @@ function renderTaskCategory(category, tasks) {
     const request = category === "help" ? helpRequest(task.id, state.selectedDate, state.selectedPerson) : null;
     const requested = request?.status === "pending";
     const canOperate = isParent() || (isOwnProfile(state.selectedPerson) && (category === "help" || cloud.activeProfile?.permissions?.complete_study === true));
-    const meta = done ? (isParent() ? "タップして完了を取り消す" : "完了しました") : requested ? (isParent() ? "確認待ちです" : "確認待ち・タップで申請取消") : category === "help" ? (isParent() ? "子どもの申請を待っています" : "タップして完了を申請") : "タップしてできた！にする";
+    const meta = done ? (isParent() ? "タップして完了を取り消す" : "完了しました") : requested ? (isParent() ? "確認待ち・タップして完了" : "確認待ち・タップで申請取消") : category === "help" ? (isParent() ? "タップして完了にする" : "タップして完了を申請") : "タップしてできた！にする";
     return `<button class="task-card ${done ? "done" : ""} ${requested ? "requested" : ""}" type="button" data-toggle-task="${task.id}" ${canOperate ? "" : "disabled"}>
       <span class="task-check">${requested ? "…" : "✓"}</span>
       <span class="task-main"><span class="task-title">${escapeHtml(task.title)}</span><span class="task-meta">${meta}</span></span>
@@ -964,8 +964,8 @@ function renderCalendarHelp() {
       const request = helpRequest(task.id, state.selectedDate, person.id);
       const requested = request?.status === "pending";
       const move = taskMoveForDisplayedDate(task, state.selectedDate);
-      const canOperate = isParent() ? done : isOwnProfile(person.id) && !done;
-      const meta = done ? (isParent() ? "完了済み・タップで取消" : "親が確認済み") : requested ? "確認待ち・タップで申請取消" : isOwnProfile(person.id) ? "タップして完了を申請" : "未申請";
+      const canOperate = isParent() || (isOwnProfile(person.id) && !done);
+      const meta = done ? (isParent() ? "完了済み・タップで取消" : "親が確認済み") : requested ? (isParent() ? "確認待ち・タップして完了" : "確認待ち・タップで申請取消") : isParent() ? "タップして完了にする" : isOwnProfile(person.id) ? "タップして完了を申請" : "未申請";
       return `<div class="calendar-help-task-row">
         <button class="task-card calendar-help-task ${done ? "done" : ""} ${requested ? "requested" : ""}" type="button" ${canOperate ? `data-toggle-calendar-task="${task.id}" data-calendar-person="${person.id}"` : "disabled"}>
           <span class="task-check">${requested ? "…" : "✓"}</span>
@@ -1155,9 +1155,9 @@ document.addEventListener("click", event => {
       renderToday();
       return;
     }
-    if (task?.category === "help" && isParent() && !state.completions[key]) { showToast("確認待ちは「やること」画面で承認できます"); return; }
     state.completions[key] = !state.completions[key];
     if (!state.completions[key]) delete state.completions[key];
+    if (task?.category === "help" && state.completions[key]) delete state.helpRequests[key];
     saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
     syncCompletion(taskId, personId, completedOn, Boolean(state.completions[key]));
     renderToday();
@@ -1189,9 +1189,9 @@ document.addEventListener("click", event => {
       renderAll();
       return;
     }
-    if (!state.completions[key]) { showToast("確認待ちは「やること」画面で承認できます"); return; }
     state.completions[key] = !state.completions[key];
     if (!state.completions[key]) delete state.completions[key];
+    if (state.completions[key]) delete state.helpRequests[key];
     saveState(state.completions[key] ? "できた！にしました 🎉" : "チェックを戻しました");
     syncCompletion(taskId, personId, completedOn, Boolean(state.completions[key]));
     renderAll();
