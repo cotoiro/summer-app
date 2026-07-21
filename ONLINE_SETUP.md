@@ -34,8 +34,9 @@
 2. `supabase/online-upgrade.sql` を SQL Editor で一度だけ実行して、家族用ログインから安全にデータを作れるようにする
 3. 既にオンライン共有を始めている場合、追加機能用の `supabase/add-daily-notes.sql` を SQL Editor で一度だけ実行する
 4. `supabase/profile-permissions.sql` を SQL Editor で一度だけ実行する
-5. アプリで家族共通のメールアドレスとパスワードを登録する
-6. 初回のプロフィール画面で、家族全員の4桁PINを設定する
+5. `supabase/enable-realtime.sql` を SQL Editor で一度だけ実行する（端末間の変更をすぐ反映するため）
+6. アプリで家族共通のメールアドレスとパスワードを登録する
+7. 初回のプロフィール画面で、家族全員の4桁PINを設定する
 
 プロジェクトURLと公開用キーはブラウザアプリへ設定できます。データベース管理用の秘密鍵はブラウザへ入れません。
 

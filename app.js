@@ -12,7 +12,12 @@ const cloud = {
   familyId: null,
   ready: false,
   syncing: false,
+  pendingWrites: 0,
+  hasWriteError: false,
+  writeChain: Promise.resolve(),
   refreshTimer: null,
+  realtimeChannel: null,
+  realtimeRefreshTimer: null,
   profileToken: null,
   activeProfile: null,
   members: [],
@@ -99,7 +104,7 @@ function normalizePeople(people) {
 
 function saveState(message) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  setSaveStatus(cloud.ready ? "家族と同期済み" : "この端末に保存中");
+  setSaveStatus(cloud.ready ? "家族へ同期中…" : "この端末に保存中");
   if (message) showToast(message);
 }
 
@@ -204,18 +209,27 @@ function eventToCloudRow(item) {
 
 async function runCloudWrite(writeAction) {
   if (!cloud.ready) return;
+  cloud.pendingWrites += 1;
   cloud.syncing = true;
   setSaveStatus("同期中…");
-  try {
+  const write = cloud.writeChain.then(async () => {
     const result = await writeAction();
     if (result?.error) throw result.error;
-    setSaveStatus("家族と同期済み");
+  });
+  // 連続タップでも、操作した順番どおりにサーバーへ送る。
+  // 失敗した操作があっても、後続の操作は送れるようにする。
+  cloud.writeChain = write.catch(() => undefined);
+  try {
+    await write;
   } catch (error) {
     console.error(error);
+    cloud.hasWriteError = true;
     setSaveStatus("同期できませんでした", true);
     showToast("同期できませんでした。通信を確認してください");
   } finally {
-    cloud.syncing = false;
+    cloud.pendingWrites -= 1;
+    cloud.syncing = cloud.pendingWrites > 0;
+    if (!cloud.syncing && !cloud.hasWriteError) setSaveStatus("家族と同期済み");
   }
 }
 
@@ -357,11 +371,36 @@ async function refreshCloudState() {
   try {
     await loadCloudState();
     renderAll();
+    cloud.hasWriteError = false;
     setSaveStatus("家族と同期済み");
   } catch (error) {
     console.error(error);
     setSaveStatus("更新を確認できませんでした", true);
   }
+}
+
+function requestCloudRefresh() {
+  clearTimeout(cloud.realtimeRefreshTimer);
+  cloud.realtimeRefreshTimer = window.setTimeout(() => {
+    if (cloud.syncing) {
+      requestCloudRefresh();
+      return;
+    }
+    refreshCloudState();
+  }, 300);
+}
+
+function subscribeToCloudChanges() {
+  if (!cloud.client || !cloud.familyId) return;
+  if (cloud.realtimeChannel) cloud.client.removeChannel(cloud.realtimeChannel);
+  const tables = ["tasks", "calendar_events", "task_completions", "help_requests", "daily_notes"];
+  let channel = cloud.client.channel(`summer-board-${cloud.familyId}`);
+  tables.forEach(table => {
+    channel = channel.on("postgres_changes", {
+      event: "*", schema: "public", table, filter: `family_id=eq.${cloud.familyId}`
+    }, requestCloudRefresh);
+  });
+  cloud.realtimeChannel = channel.subscribe();
 }
 
 function showAuthMessage(message) {
@@ -475,6 +514,7 @@ async function startFamilySession(user) {
   document.getElementById("signOutButton").hidden = false;
   setSaveStatus("家族と同期済み");
   await restoreOrChooseProfile();
+  subscribeToCloudChanges();
   clearInterval(cloud.refreshTimer);
   cloud.refreshTimer = window.setInterval(refreshCloudState, 12000);
 }
@@ -1548,6 +1588,9 @@ async function signOutCurrentDevice() {
   await cloud.client.auth.signOut();
   cloud.ready = false;
   clearInterval(cloud.refreshTimer);
+  clearTimeout(cloud.realtimeRefreshTimer);
+  if (cloud.realtimeChannel) cloud.client.removeChannel(cloud.realtimeChannel);
+  cloud.realtimeChannel = null;
   cloud.user = null;
   cloud.familyId = null;
   cloud.activeProfile = null;
